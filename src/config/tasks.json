@@ -1,0 +1,17 @@
+{
+  "tasks": [
+    {
+      "id": "weather-daily",
+      "name": "每日天气推送",
+      "enabled": false,
+      "schedule": "0 8 * * *",
+      "api": {
+        "url": "https://api.open-meteo.com/v1/forecast?latitude=25.03&longitude=121.56&current=temperature_2m",
+        "method": "GET",
+        "timeoutMs": 5000
+      },
+      "template": "台北目前温度：{current.temperature_2m}°C",
+      "targets": ["Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]
+    }
+  ]
+}
