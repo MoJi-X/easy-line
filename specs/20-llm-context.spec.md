@@ -54,3 +54,10 @@
 - 风险：参考文档示例中的 `BufferMemory` 默认行为不等于“仅保留最近 3 轮”，实现时必须额外裁剪。
 - 风险：OpenAI 接口不稳定会导致回复超时或失败。
 - 回退：保留固定 fallback 回复；必要时先禁用上下文裁剪外的增强能力，只保留单轮对话。
+
+## 迭代记录
+- 2026-03-12：回滚冲突提交后重新实现 LLM-001~LLM-003，目标是在现有基线代码上完成可运行切片并降低后续合入冲突。
+- 2026-03-12（重做落地）：完成 `src/services/llm.ts`、`src/routes/webhook.ts`、`src/services/line.ts` 与 `src/index.ts` 集成，支持按 `userId` 的 3 轮记忆裁剪、分类异常、LLM 失败中文降级。
+- 当前阻塞点：环境无法安装依赖，无法进行本地编译与真实 LINE/OpenAI 联调。
+- 下一步：推进 `specs/30-scheduler-push.spec.md`。
+
