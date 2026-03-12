@@ -59,3 +59,5 @@
 - 2026-03-12：完成 LLM-001/LLM-002/LLM-003 的首个可运行切片，实现 `LLMService.chat`、按 `userId` 的 `Map<string, BufferMemory>` 记忆管理、3 轮上下文裁剪，以及 Webhook 文本链路降级回复。
 - 当前阻塞点：缺少真实 LINE Developers 与 OpenAI 联调环境，暂无法完成端到端验收。
 - 下一步：进入 `specs/30-scheduler-push.spec.md` 的定时推送链路实现。
+
+- 2026-03-12（冲突修复）：移除启动阶段对 `OPENAI_API_KEY` 的强依赖，改为由 `LLMService` 在模型初始化时分类抛错，确保缺少 Key 时仍可走 Webhook 中文降级回复。

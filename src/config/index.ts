@@ -4,20 +4,17 @@ dotenv.config();
 
 type RequiredConfigKey =
   | "LINE_CHANNEL_SECRET"
-  | "LINE_CHANNEL_ACCESS_TOKEN"
-  | "OPENAI_API_KEY";
+  | "LINE_CHANNEL_ACCESS_TOKEN";
 
 interface AppConfig {
   lineChannelSecret: string;
   lineChannelAccessToken: string;
-  openAIApiKey: string;
   port: number;
 }
 
 const REQUIRED_KEYS: RequiredConfigKey[] = [
   "LINE_CHANNEL_SECRET",
   "LINE_CHANNEL_ACCESS_TOKEN",
-  "OPENAI_API_KEY",
 ];
 
 const getMissingKeys = (): RequiredConfigKey[] => {
@@ -54,6 +51,5 @@ if (missingKeys.length > 0) {
 export const config: AppConfig = {
   lineChannelSecret: process.env.LINE_CHANNEL_SECRET as string,
   lineChannelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN as string,
-  openAIApiKey: process.env.OPENAI_API_KEY as string,
   port: parsePort(),
 };

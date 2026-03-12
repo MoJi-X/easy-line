@@ -4,6 +4,7 @@ import { MessageEvent, TextEventMessage, WebhookEvent } from "@line/bot-sdk";
 import { LLMService, LLMServiceError } from "../services/llm";
 import { lineMiddleware, LineService } from "../services/line";
 
+const MODULE_NAME = "WebhookRoute";
 const FALLBACK_REPLY = "抱歉，我现在有点忙，请稍后再试 🙏";
 
 const router = Router();
@@ -29,8 +30,10 @@ const handleTextMessage = async (
     const reply = await LLMService.chat(userId, message);
     await LineService.replyText(event.replyToken, reply || FALLBACK_REPLY);
   } catch (error) {
-    if (!(error instanceof LLMServiceError)) {
-      console.error("[WebhookRoute] errorType=UNEXPECTED_LLM_FAILURE");
+    if (error instanceof LLMServiceError) {
+      console.error(`[${MODULE_NAME}] errorType=${error.type}`);
+    } else {
+      console.error(`[${MODULE_NAME}] errorType=UNEXPECTED_LLM_FAILURE`);
     }
 
     await LineService.replyText(event.replyToken, FALLBACK_REPLY);
@@ -46,7 +49,11 @@ router.post("/webhook", lineMiddleware, async (req, res) => {
         return;
       }
 
-      await handleTextMessage(event);
+      try {
+        await handleTextMessage(event);
+      } catch {
+        console.error(`[${MODULE_NAME}] errorType=LINE_REPLY_FAILED`);
+      }
     }),
   );
 
