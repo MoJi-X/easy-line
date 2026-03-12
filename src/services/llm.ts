@@ -2,6 +2,8 @@ import { ChatOpenAI } from "@langchain/openai";
 import { ConversationChain } from "langchain/chains";
 import { BufferMemory } from "langchain/memory";
 
+import { config } from "../config";
+
 const MODULE_NAME = "LLMService";
 const MAX_CONTEXT_ROUNDS = 3;
 const MAX_CONTEXT_MESSAGES = MAX_CONTEXT_ROUNDS * 2;
@@ -41,7 +43,7 @@ const logError = (userId: string, errorType: LLMServiceErrorType): void => {
 };
 
 const createModel = (): ChatOpenAI => {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = config.openAIApiKey;
 
   if (!apiKey) {
     throw new LLMServiceError(

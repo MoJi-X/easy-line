@@ -61,3 +61,4 @@
 - 下一步：进入 `specs/30-scheduler-push.spec.md` 的定时推送链路实现。
 
 - 2026-03-12（冲突修复）：移除启动阶段对 `OPENAI_API_KEY` 的强依赖，改为由 `LLMService` 在模型初始化时分类抛错，确保缺少 Key 时仍可走 Webhook 中文降级回复。
+- 2026-03-12（冲突再处理）：在 `config` 中保留可选 `openAIApiKey` 字段以兼容不同分支调用方式，但不作为启动强依赖，实际校验仍在 `LLMService` 内执行。

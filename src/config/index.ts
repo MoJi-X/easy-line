@@ -9,6 +9,7 @@ type RequiredConfigKey =
 interface AppConfig {
   lineChannelSecret: string;
   lineChannelAccessToken: string;
+  openAIApiKey?: string;
   port: number;
 }
 
@@ -51,5 +52,6 @@ if (missingKeys.length > 0) {
 export const config: AppConfig = {
   lineChannelSecret: process.env.LINE_CHANNEL_SECRET as string,
   lineChannelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN as string,
+  openAIApiKey: process.env.OPENAI_API_KEY?.trim() || undefined,
   port: parsePort(),
 };
