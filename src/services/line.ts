@@ -1,23 +1,37 @@
-import { Client, MiddlewareConfig, TextMessage, middleware } from "@line/bot-sdk";
+import { Client, type Message, type ClientConfig } from '@line/bot-sdk';
 
-import { config } from "../config";
+const createLineClient = (): Client => {
+  const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
-const lineConfig: MiddlewareConfig = {
-  channelSecret: config.lineChannelSecret,
-  channelAccessToken: config.lineChannelAccessToken,
+  if (!channelAccessToken) {
+    throw new Error('Missing required env: LINE_CHANNEL_ACCESS_TOKEN');
+  }
+
+  const config: ClientConfig = {
+    channelAccessToken,
+  };
+
+  return new Client(config);
 };
 
-const client = new Client(lineConfig);
+export class LineService {
+  private readonly client: Client;
 
-export const lineMiddleware = middleware(lineConfig);
+  constructor(client: Client = createLineClient()) {
+    this.client = client;
+  }
 
-export const LineService = {
-  async replyText(replyToken: string, text: string): Promise<void> {
-    const message: TextMessage = {
-      type: "text",
-      text,
-    };
+  async replyMessage(replyToken: string, messages: Message | Message[]): Promise<void> {
+    await this.client.replyMessage(replyToken, messages);
+  }
 
-    await client.replyMessage(replyToken, message);
-  },
-};
+  async pushMessage(to: string, messages: Message | Message[]): Promise<void> {
+    await this.client.pushMessage(to, messages);
+  }
+
+  async multicast(to: string[], messages: Message | Message[]): Promise<void> {
+    await this.client.multicast(to, messages);
+  }
+}
+
+export const lineService = new LineService();

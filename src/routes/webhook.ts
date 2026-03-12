@@ -1,52 +1,65 @@
-import { MessageEvent, TextEventMessage, WebhookEvent } from "@line/bot-sdk";
-import { Router } from "express";
+import {
+  middleware,
+  type MiddlewareConfig,
+  type WebhookEvent,
+  type MessageEvent,
+  type TextMessage,
+} from '@line/bot-sdk';
+import { Router, type Request, type Response, type NextFunction } from 'express';
+import { lineService } from '../services/line';
 
-import { LLMService } from "../services/llm";
-import { lineMiddleware, LineService } from "../services/line";
+const channelSecret = process.env.LINE_CHANNEL_SECRET;
 
-const MODULE_NAME = "WebhookRoute";
-const FALLBACK_REPLY = "抱歉，我现在有点忙，请稍后再试 🙏";
+if (!channelSecret) {
+  throw new Error('Missing required env: LINE_CHANNEL_SECRET');
+}
+
+const middlewareConfig: MiddlewareConfig = {
+  channelSecret,
+};
 
 const router = Router();
 
-const isTextMessageEvent = (
-  event: WebhookEvent,
-): event is MessageEvent & { message: TextEventMessage } => {
-  return event.type === "message" && event.message.type === "text";
+const isTextMessageEvent = (event: WebhookEvent): event is MessageEvent & { message: TextMessage } => {
+  return event.type === 'message' && event.message.type === 'text';
 };
 
-const handleTextMessage = async (
-  event: MessageEvent & { message: TextEventMessage },
-): Promise<void> => {
-  const userId = event.source.userId;
-
-  if (!userId) {
+const handleEvent = async (event: WebhookEvent): Promise<void> => {
+  if (!isTextMessageEvent(event)) {
+    console.info(`[webhook] skip non-text event: type=${event.type}`);
     return;
   }
 
-  try {
-    const reply = await LLMService.chat(userId, event.message.text);
-    await LineService.replyText(event.replyToken, reply || FALLBACK_REPLY);
-  } catch {
-    console.error(`[${MODULE_NAME}] errorType=LLM_FALLBACK`);
-    await LineService.replyText(event.replyToken, FALLBACK_REPLY);
-  }
+  const replyToken = event.replyToken;
+  const userId = event.source.userId ?? 'unknown-user';
+  const userText = event.message.text;
+
+  console.info(`[webhook] text event received from userId=${userId}, text="${userText}"`);
+
+  await lineService.replyMessage(replyToken, {
+    type: 'text',
+    text: '收到你的訊息了，目前先使用固定回覆，LLM 功能準備中。',
+  });
 };
 
-router.post("/webhook", lineMiddleware, async (req, res) => {
-  const events = req.body.events as WebhookEvent[];
+router.post('/webhook', middleware(middlewareConfig), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const events = ((req.body as { events?: WebhookEvent[] }).events ?? []) as WebhookEvent[];
 
-  await Promise.all(
-    events.map(async (event) => {
-      if (!isTextMessageEvent(event)) {
-        return;
-      }
+    await Promise.all(
+      events.map(async (event) => {
+        try {
+          await handleEvent(event);
+        } catch (error) {
+          console.error('[webhook] failed to process event', error);
+        }
+      }),
+    );
 
-      await handleTextMessage(event);
-    }),
-  );
-
-  res.status(200).json({ ok: true });
+    res.json({ status: 'ok' });
+  } catch (error) {
+    next(error);
+  }
 });
 
 export default router;
