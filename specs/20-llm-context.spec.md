@@ -54,3 +54,8 @@
 - 风险：参考文档示例中的 `BufferMemory` 默认行为不等于“仅保留最近 3 轮”，实现时必须额外裁剪。
 - 风险：OpenAI 接口不稳定会导致回复超时或失败。
 - 回退：保留固定 fallback 回复；必要时先禁用上下文裁剪外的增强能力，只保留单轮对话。
+
+## 迭代记录
+- 2026-03-12：完成 LLM-001/LLM-002/LLM-003 的首个可运行切片，实现 `LLMService.chat`、按 `userId` 的 `Map<string, BufferMemory>` 记忆管理、3 轮上下文裁剪，以及 Webhook 文本链路降级回复。
+- 当前阻塞点：缺少真实 LINE Developers 与 OpenAI 联调环境，暂无法完成端到端验收。
+- 下一步：进入 `specs/30-scheduler-push.spec.md` 的定时推送链路实现。
