@@ -1,4 +1,4 @@
-import { Client, middleware, MiddlewareConfig, TextMessage } from "@line/bot-sdk";
+import { Client, MiddlewareConfig, TextMessage, middleware } from "@line/bot-sdk";
 
 import { config } from "../config";
 

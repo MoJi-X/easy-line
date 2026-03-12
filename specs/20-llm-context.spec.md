@@ -56,9 +56,8 @@
 - 回退：保留固定 fallback 回复；必要时先禁用上下文裁剪外的增强能力，只保留单轮对话。
 
 ## 迭代记录
-- 2026-03-12：完成 LLM-001/LLM-002/LLM-003 的首个可运行切片，实现 `LLMService.chat`、按 `userId` 的 `Map<string, BufferMemory>` 记忆管理、3 轮上下文裁剪，以及 Webhook 文本链路降级回复。
-- 当前阻塞点：缺少真实 LINE Developers 与 OpenAI 联调环境，暂无法完成端到端验收。
-- 下一步：进入 `specs/30-scheduler-push.spec.md` 的定时推送链路实现。
+- 2026-03-12：回滚冲突提交后重新实现 LLM-001~LLM-003，目标是在现有基线代码上完成可运行切片并降低后续合入冲突。
+- 2026-03-12（重做落地）：完成 `src/services/llm.ts`、`src/routes/webhook.ts`、`src/services/line.ts` 与 `src/index.ts` 集成，支持按 `userId` 的 3 轮记忆裁剪、分类异常、LLM 失败中文降级。
+- 当前阻塞点：环境无法安装依赖，无法进行本地编译与真实 LINE/OpenAI 联调。
+- 下一步：推进 `specs/30-scheduler-push.spec.md`。
 
-- 2026-03-12（冲突修复）：移除启动阶段对 `OPENAI_API_KEY` 的强依赖，改为由 `LLMService` 在模型初始化时分类抛错，确保缺少 Key 时仍可走 Webhook 中文降级回复。
-- 2026-03-12（冲突再处理）：在 `config` 中保留可选 `openAIApiKey` 字段以兼容不同分支调用方式，但不作为启动强依赖，实际校验仍在 `LLMService` 内执行。

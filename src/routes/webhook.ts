@@ -1,7 +1,7 @@
-import { Router } from "express";
 import { MessageEvent, TextEventMessage, WebhookEvent } from "@line/bot-sdk";
+import { Router } from "express";
 
-import { LLMService, LLMServiceError } from "../services/llm";
+import { LLMService } from "../services/llm";
 import { lineMiddleware, LineService } from "../services/line";
 
 const MODULE_NAME = "WebhookRoute";
@@ -24,18 +24,11 @@ const handleTextMessage = async (
     return;
   }
 
-  const message = event.message.text;
-
   try {
-    const reply = await LLMService.chat(userId, message);
+    const reply = await LLMService.chat(userId, event.message.text);
     await LineService.replyText(event.replyToken, reply || FALLBACK_REPLY);
-  } catch (error) {
-    if (error instanceof LLMServiceError) {
-      console.error(`[${MODULE_NAME}] errorType=${error.type}`);
-    } else {
-      console.error(`[${MODULE_NAME}] errorType=UNEXPECTED_LLM_FAILURE`);
-    }
-
+  } catch {
+    console.error(`[${MODULE_NAME}] errorType=LLM_FALLBACK`);
     await LineService.replyText(event.replyToken, FALLBACK_REPLY);
   }
 };
@@ -49,11 +42,7 @@ router.post("/webhook", lineMiddleware, async (req, res) => {
         return;
       }
 
-      try {
-        await handleTextMessage(event);
-      } catch {
-        console.error(`[${MODULE_NAME}] errorType=LINE_REPLY_FAILED`);
-      }
+      await handleTextMessage(event);
     }),
   );
 

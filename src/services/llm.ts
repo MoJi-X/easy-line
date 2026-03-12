@@ -27,42 +27,33 @@ export class LLMServiceError extends Error {
 const userMemories = new Map<string, BufferMemory>();
 
 const maskUserId = (userId: string): string => {
-  const normalized = userId.trim();
-
-  if (normalized.length <= 4) {
+  if (userId.length < 6) {
     return "****";
   }
 
-  return `${normalized.slice(0, 2)}***${normalized.slice(-2)}`;
+  return `${userId.slice(0, 2)}***${userId.slice(-2)}`;
 };
 
 const logError = (userId: string, errorType: LLMServiceErrorType): void => {
-  console.error(
-    `[${MODULE_NAME}] user=${maskUserId(userId)} errorType=${errorType}`,
-  );
+  console.error(`[${MODULE_NAME}] user=${maskUserId(userId)} errorType=${errorType}`);
 };
 
 const createModel = (): ChatOpenAI => {
-  const apiKey = config.openAIApiKey;
-
-  if (!apiKey) {
-    throw new LLMServiceError(
-      "MISSING_API_KEY",
-      "OPENAI_API_KEY is missing or empty",
-    );
+  if (!config.openAIApiKey) {
+    throw new LLMServiceError("MISSING_API_KEY", "OPENAI_API_KEY is missing");
   }
 
   try {
     return new ChatOpenAI({
       model: "gpt-3.5-turbo",
       temperature: 0.7,
-      openAIApiKey: apiKey,
-      timeout: 8_000,
+      openAIApiKey: config.openAIApiKey,
+      timeout: 8000,
     });
   } catch (error) {
     throw new LLMServiceError(
       "MODEL_INIT_FAILED",
-      "Failed to initialize OpenAI chat model",
+      "Failed to initialize OpenAI model",
       error,
     );
   }
@@ -94,12 +85,12 @@ const trimMemory = async (memory: BufferMemory): Promise<void> => {
     return;
   }
 
-  const keptMessages = messages.slice(-MAX_CONTEXT_MESSAGES);
+  const recentMessages = messages.slice(-MAX_CONTEXT_MESSAGES);
 
   await memory.chatHistory.clear();
 
-  for (const message of keptMessages) {
-    await memory.chatHistory.addMessage(message);
+  for (const msg of recentMessages) {
+    await memory.chatHistory.addMessage(msg);
   }
 };
 
@@ -125,7 +116,7 @@ export const LLMService = {
 
       const wrappedError = new LLMServiceError(
         "MODEL_CALL_FAILED",
-        "Failed to generate chat response",
+        "Failed to generate model response",
         error,
       );
 
