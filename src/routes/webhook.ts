@@ -5,7 +5,7 @@ import {
   type MessageEvent,
   type TextMessage,
 } from '@line/bot-sdk';
-import { Router, type Request, type Response } from 'express';
+import { Router, type Request, type Response, type NextFunction } from 'express';
 import { lineService } from '../services/line';
 
 const channelSecret = process.env.LINE_CHANNEL_SECRET;
@@ -42,29 +42,24 @@ const handleEvent = async (event: WebhookEvent): Promise<void> => {
   });
 };
 
-router.post(
-  '/webhook',
-  middleware(middlewareConfig),
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const events = ((req.body as { events?: WebhookEvent[] }).events ?? []) as WebhookEvent[];
+router.post('/webhook', middleware(middlewareConfig), async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const events = ((req.body as { events?: WebhookEvent[] }).events ?? []) as WebhookEvent[];
 
-      await Promise.all(
-        events.map(async (event) => {
-          try {
-            await handleEvent(event);
-          } catch (error) {
-            console.error('[webhook] failed to process event', error);
-          }
-        }),
-      );
+    await Promise.all(
+      events.map(async (event) => {
+        try {
+          await handleEvent(event);
+        } catch (error) {
+          console.error('[webhook] failed to process event', error);
+        }
+      }),
+    );
 
-      res.json({ status: 'ok' });
-    } catch (error) {
-      console.error('[webhook] unhandled error', error);
-      res.status(500).json({ status: 'error', code: 'WEBHOOK_INTERNAL_ERROR' });
-    }
-  },
-);
+    res.json({ status: 'ok' });
+  } catch (error) {
+    next(error);
+  }
+});
 
 export default router;
