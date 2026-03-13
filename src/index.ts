@@ -23,6 +23,31 @@ app.use(errorHandler);
 
 schedulerService.start();
 
-app.listen(config.port, () => {
-  console.log(`Server is running on port ${config.port}`);
+const server = app.listen(config.port, () => {
+  console.info(`Server is running on port ${config.port}`);
+});
+
+let isShuttingDown = false;
+
+const shutdown = (signal: NodeJS.Signals): void => {
+  if (isShuttingDown) {
+    return;
+  }
+
+  isShuttingDown = true;
+  console.info(`[app] received ${signal}, shutting down`);
+  schedulerService.stop();
+
+  server.close(() => {
+    console.info('[app] HTTP server closed');
+    process.exit(0);
+  });
+};
+
+process.once('SIGINT', () => {
+  shutdown('SIGINT');
+});
+
+process.once('SIGTERM', () => {
+  shutdown('SIGTERM');
 });

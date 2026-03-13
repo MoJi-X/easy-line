@@ -3,8 +3,9 @@ import cron, { type ScheduledTask } from 'node-cron';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { lineService } from './line';
 import { AppError } from '../errors/app-error';
+import { schedulerLogFilePath, schedulerLogger } from '../utils/scheduler-logger';
+import { lineService } from './line';
 
 export interface TaskApiConfig {
   url: string;
@@ -29,15 +30,27 @@ interface TasksFile {
   tasks: SchedulerTaskConfig[];
 }
 
-interface TaskExecutionRecord {
+type TaskExecutionStatus = 'success' | 'failed';
+
+export type TaskExecutionTrigger = 'manual' | 'scheduled';
+
+export interface TaskExecutionRecord {
   taskId: string;
-  status: 'success' | 'failed';
+  taskName: string;
+  status: TaskExecutionStatus;
+  triggeredBy: TaskExecutionTrigger;
   executedAt: string;
+  durationMs: number;
   message: string;
+}
+
+interface ExecuteTaskOptions {
+  trigger?: TaskExecutionTrigger;
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
 const MAX_RECORDS = 20;
+const TASKS_CONFIG_PATH = path.resolve(process.cwd(), 'src/config/tasks.json');
 
 const resolveEnvPlaceholders = (value: string): string => {
   return value.replace(/\$\{([A-Z0-9_]+)\}/g, (_matched, key: string) => {
@@ -78,6 +91,18 @@ const normalizeTask = (task: SchedulerTaskConfig): SchedulerTaskConfig => {
   };
 };
 
+const getErrorMessage = (error: unknown): string => {
+  if (error instanceof AppError) {
+    return error.message;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return 'Unknown error';
+};
+
 export class SchedulerService {
   private readonly scheduledJobs = new Map<string, ScheduledTask>();
 
@@ -85,43 +110,127 @@ export class SchedulerService {
 
   private readonly executionRecords: TaskExecutionRecord[] = [];
 
+  private started = false;
+
   loadTasksFromConfig(): SchedulerTaskConfig[] {
-    const configPath = path.resolve(process.cwd(), 'src/config/tasks.json');
-    const content = readFileSync(configPath, 'utf-8');
-    const raw = JSON.parse(content) as TasksFile;
+    try {
+      const content = readFileSync(TASKS_CONFIG_PATH, 'utf-8');
+      const raw = JSON.parse(content) as TasksFile;
 
-    if (!raw.tasks || !Array.isArray(raw.tasks)) {
-      throw new AppError(500, 'INTERNAL_ERROR', 'Invalid tasks config format.');
+      if (!raw.tasks || !Array.isArray(raw.tasks)) {
+        throw new AppError(500, 'INTERNAL_ERROR', 'Invalid tasks config format.');
+      }
+
+      return raw.tasks.map((task) => normalizeTask(task));
+    } catch (error) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+
+      throw new AppError(500, 'INTERNAL_ERROR', `Failed to load tasks config: ${getErrorMessage(error)}`);
     }
-
-    return raw.tasks.map((task) => normalizeTask(task));
   }
 
   start(): void {
-    const tasks = this.loadTasksFromConfig();
+    if (this.started) {
+      schedulerLogger.warn('scheduler service start requested while already running');
+      return;
+    }
 
-    tasks
-      .filter((task) => task.enabled)
-      .forEach((task) => {
-        if (!cron.validate(task.schedule)) {
-          console.error(`[scheduler] invalid cron for task=${task.id}, schedule=${task.schedule}`);
-          return;
-        }
+    schedulerLogger.info('scheduler service starting', {
+      configPath: TASKS_CONFIG_PATH,
+      logFilePath: schedulerLogFilePath,
+    });
 
-        this.loadedTasks.set(task.id, task);
+    let tasks: SchedulerTaskConfig[];
 
-        const job = cron.schedule(task.schedule, async () => {
-          try {
-            await this.executeTask(task.id);
-          } catch (error) {
-            console.error(`[scheduler] task execution failed, task=${task.id}`, error);
-          }
+    try {
+      tasks = this.loadTasksFromConfig();
+    } catch (error) {
+      schedulerLogger.error('scheduler service failed to load task config', { configPath: TASKS_CONFIG_PATH }, error);
+      throw error;
+    }
+
+    schedulerLogger.info('scheduler task configs loaded', { taskCount: tasks.length });
+
+    tasks.forEach((task) => {
+      if (!task.enabled) {
+        schedulerLogger.info('scheduler task skipped because it is disabled', {
+          taskId: task.id,
+          taskName: task.name,
+        });
+        return;
+      }
+
+      if (!cron.validate(task.schedule)) {
+        schedulerLogger.error('scheduler task skipped because cron expression is invalid', {
+          taskId: task.id,
+          taskName: task.name,
+          schedule: task.schedule,
+        });
+        return;
+      }
+
+      if (task.targets.length === 0) {
+        schedulerLogger.warn('scheduler task skipped because no targets are configured', {
+          taskId: task.id,
+          taskName: task.name,
+        });
+        return;
+      }
+
+      try {
+        const job = cron.schedule(task.schedule, () => {
+          void this.executeTask(task.id, { trigger: 'scheduled' }).catch(() => undefined);
         });
 
+        this.loadedTasks.set(task.id, task);
         this.scheduledJobs.set(task.id, job);
-      });
 
-    console.info(`[scheduler] loaded enabled tasks count=${this.loadedTasks.size}`);
+        schedulerLogger.info('scheduler task registered', {
+          taskId: task.id,
+          taskName: task.name,
+          schedule: task.schedule,
+          targetCount: task.targets.length,
+        });
+      } catch (error) {
+        schedulerLogger.error('scheduler task registration failed', {
+          taskId: task.id,
+          taskName: task.name,
+          schedule: task.schedule,
+        }, error);
+      }
+    });
+
+    this.started = true;
+
+    schedulerLogger.info('scheduler service started', { activeTaskCount: this.loadedTasks.size });
+  }
+
+  stop(): void {
+    if (!this.started) {
+      schedulerLogger.warn('scheduler service stop requested while not running');
+      return;
+    }
+
+    schedulerLogger.info('scheduler service stopping', { activeTaskCount: this.scheduledJobs.size });
+
+    this.scheduledJobs.forEach((job, taskId) => {
+      job.stop();
+
+      const task = this.loadedTasks.get(taskId);
+
+      schedulerLogger.info('scheduler task stopped', {
+        taskId,
+        taskName: task?.name ?? taskId,
+      });
+    });
+
+    this.scheduledJobs.clear();
+    this.loadedTasks.clear();
+    this.started = false;
+
+    schedulerLogger.info('scheduler service stopped');
   }
 
   listTasks(): SchedulerTaskConfig[] {
@@ -132,30 +241,86 @@ export class SchedulerService {
     return [...this.executionRecords];
   }
 
-  async executeTask(taskId: string): Promise<{ taskId: string; message: string }> {
+  async executeTask(taskId: string, options: ExecuteTaskOptions = {}): Promise<{ taskId: string; message: string }> {
+    const triggeredBy = options.trigger ?? 'manual';
     const task = this.loadedTasks.get(taskId);
 
     if (!task) {
+      schedulerLogger.error('task execution rejected because task is not loaded', { taskId, triggeredBy });
       throw new AppError(404, 'RESOURCE_NOT_FOUND', `Task not found: ${taskId}`);
     }
 
-    const messageText = await this.fetchAndRender(task);
-    const message = { type: 'text' as const, text: messageText };
+    const executionStartedAt = Date.now();
+    const executedAt = new Date().toISOString();
 
-    if (task.targets.length === 1) {
-      await lineService.pushMessage(task.targets[0], message);
-    } else {
-      await lineService.multicast(task.targets, message);
-    }
-
-    this.recordExecution({
+    schedulerLogger.info('task execution started', {
       taskId,
-      status: 'success',
-      executedAt: new Date().toISOString(),
-      message: 'Task executed successfully.',
+      taskName: task.name,
+      triggeredBy,
+      targetCount: task.targets.length,
     });
 
-    return { taskId, message: 'Task executed successfully.' };
+    try {
+      const messageText = await this.fetchAndRender(task);
+      const message = { type: 'text' as const, text: messageText };
+
+      if (task.targets.length === 1) {
+        await lineService.pushMessage(task.targets[0], message);
+      } else {
+        await lineService.multicast(task.targets, message);
+      }
+
+      const durationMs = Date.now() - executionStartedAt;
+      const successMessage = 'Task executed successfully.';
+
+      this.recordExecution({
+        taskId,
+        taskName: task.name,
+        status: 'success',
+        triggeredBy,
+        executedAt,
+        durationMs,
+        message: successMessage,
+      });
+
+      schedulerLogger.info('task execution succeeded', {
+        taskId,
+        taskName: task.name,
+        triggeredBy,
+        targetCount: task.targets.length,
+        durationMs,
+      });
+
+      return { taskId, message: successMessage };
+    } catch (error) {
+      const durationMs = Date.now() - executionStartedAt;
+      const failureMessage = getErrorMessage(error);
+
+      this.recordExecution({
+        taskId,
+        taskName: task.name,
+        status: 'failed',
+        triggeredBy,
+        executedAt,
+        durationMs,
+        message: failureMessage,
+      });
+
+      schedulerLogger.error('task execution failed', {
+        taskId,
+        taskName: task.name,
+        triggeredBy,
+        targetCount: task.targets.length,
+        durationMs,
+        errorMessage: failureMessage,
+      }, error);
+
+      if (error instanceof AppError) {
+        throw error;
+      }
+
+      throw new AppError(500, 'INTERNAL_ERROR', `Task execution failed: ${failureMessage}`);
+    }
   }
 
   private async fetchAndRender(task: SchedulerTaskConfig): Promise<string> {
@@ -173,14 +338,6 @@ export class SchedulerService {
       return renderTemplate(task.template, response.data);
     } catch (error) {
       const message = error instanceof AxiosError ? error.message : 'Unknown API error';
-
-      this.recordExecution({
-        taskId: task.id,
-        status: 'failed',
-        executedAt: new Date().toISOString(),
-        message: `External API request failed: ${message}`,
-      });
-
       throw new AppError(502, 'EXTERNAL_SERVICE_ERROR', `Task API request failed: ${message}`);
     }
   }

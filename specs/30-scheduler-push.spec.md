@@ -36,8 +36,8 @@
 - inputs：需求文档 3.3.1、3.3.2；架构文档 4.2、6.1、6.2；数据库文档 5.2、6.5；API 文档 4.2。
 - outputs：`src/services/scheduler.ts`。
 - dependencies：SCH-001、`specs/10-line-message.spec.md` 的 LINE-002。
-- implementation notes：应用启动时仅加载 `enabled=true` 的任务；先校验 Cron；调用外部 API 后进行字符串模板替换；单播走 `pushMessage`，多目标走 `multicast`。
-- acceptance criteria：启用任务能按时间执行；第三方 API 数据能填充到模板；用户能收到主动推送消息；失败任务会被记录但不影响其他任务运行。
+- implementation notes：应用启动时仅加载 `enabled=true` 的任务；先校验 Cron；调用外部 API 后进行字符串模板替换；单播走 `pushMessage`，多目标走 `multicast`；调度器需同时输出控制台日志和 `logs/scheduler.log` 文件日志，覆盖任务注册、启动、停止、执行开始、执行成功、执行失败等关键节点。
+- acceptance criteria：启用任务能按时间执行；第三方 API 数据能填充到模板；用户能收到主动推送消息；失败任务会被记录但不影响其他任务运行；应用启动与退出时可看到调度器启动/停止日志，任务执行信息可同时在控制台和日志文件中追踪。
 
 ### SCH-003 最小管理接口与调试能力
 - goal：提供 Demo 调试必需的任务状态查询和手动触发，不扩展为完整任务后台。
@@ -50,7 +50,7 @@
 ## 验收与测试
 - 单元验证：Cron 表达式校验、模板变量替换、任务加载过滤。
 - 集成验证：启动后自动加载任务；手动触发接口可执行一次任务。
-- 演示验收：至少一个定时任务能成功推送；至少一个外部 API 数据可被模板渲染。
+- 演示验收：至少一个定时任务能成功推送；至少一个外部 API 数据可被模板渲染；`logs/scheduler.log` 中可查看调度器启动、停止和任务执行结果。
 
 ## 风险与回退
 - 风险：参考文档中任务配置路径存在差异，若误用 `config/tasks.json` 会和需求文档不一致。
@@ -58,6 +58,6 @@
 - 回退：先保留单个示例任务和固定模板；若接口不稳定，可临时用 mock 数据完成 Demo 演示。
 
 ## 实现进展
-- 本次提交完成：SCH-001、SCH-002、SCH-003 的最小可运行切片（静态任务配置、SchedulerService、任务查询与手动触发接口）。
+- 本次提交完成：SCH-001、SCH-002、SCH-003 的最小可运行切片（静态任务配置、SchedulerService、任务查询与手动触发接口），并补齐调度器生命周期与执行日志落盘。
 - 当前阻塞：暂无功能阻塞；需在真实环境补齐可用 target userId 与外部 API 凭据后再做联调。
 - 下一步建议：衔接 `specs/40-api-governance.spec.md`，补齐统一错误码覆盖与异常路径验收用例。
