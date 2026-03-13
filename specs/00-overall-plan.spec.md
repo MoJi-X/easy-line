@@ -10,7 +10,7 @@
 ## 统一取舍
 - 文档冲突时以《需求规格说明书》为准。
 - 环境变量命名采用 `LINE_CHANNEL_SECRET`、`LINE_CHANNEL_ACCESS_TOKEN`、`LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`、`PORT`。
-- Demo 存储采用内存 `Map`、LangChain `BufferMemory`、`src/config/tasks.json`，不引入正式数据库。
+- Demo 存储采用内存 `Map<string, BaseMessage[]>`、`src/config/tasks.json`，不引入正式数据库。
 - 安全和性能只保留 Demo 必需项：Webhook 签名校验、环境变量管理、基础错误处理、基础健康检查。
 - 定时任务的运行时配置以静态 JSON 为主，不做完整后台配置平台。
 

@@ -26,7 +26,7 @@
 - inputs：需求文档 3.2.1、6.1；架构文档 4.3；数据库文档 6.4；API 文档 5.1。
 - outputs：`src/services/llm.ts`。
 - dependencies：`specs/10-line-message.spec.md` 中的配置入口。
-- implementation notes：使用 `@langchain/openai` 和 `@langchain/core`；模型默认 `gpt-3.5-turbo`，但通过 `LLM_MODEL` 可配置；自定义 `LLM_BASE_URL` 时仅支持 OpenAI-compatible 接口；保留固定温度和统一 `chat(userId, message)` 方法，避免继续依赖会触发 npm optional peer 冲突的 `langchain` 元包。
+- implementation notes：使用官方最新 LangChain 1.x 组合 `@langchain/core@1.1.32` 与 `@langchain/openai@1.2.13`；模型默认 `gpt-3.5-turbo`，但通过 `LLM_MODEL` 可配置；自定义 `LLM_BASE_URL` 时仅支持 OpenAI-compatible 接口；保留固定温度和统一 `chat(userId, message)` 方法，继续避免依赖会触发 npm optional peer 冲突的 `langchain` 元包。
 - acceptance criteria：服务可以成功创建模型实例；调用链路只暴露一个对外聊天入口；模型异常能被上层捕获；`LLM_BASE_URL` 非法时在配置加载阶段快速失败。
 
 ### LLM-002 按用户管理上下文记忆
@@ -69,6 +69,7 @@
 - 2026-03-12：回滚冲突提交后重新实现 LLM-001~LLM-003，目标是在现有基线代码上完成可运行切片并降低后续合入冲突。
 - 2026-03-12（重做落地）：完成 `src/services/llm.ts`、`src/routes/webhook.ts`、`src/services/line.ts` 与 `src/index.ts` 集成，支持按 `userId` 的 3 轮记忆裁剪、分类异常、LLM 失败中文降级。
 - 2026-03-13：为解决 `npm install` 在 npm 11 下的 LangChain peer 冲突，改为直接使用 `@langchain/openai` + `@langchain/core/messages` 维护 3 轮上下文，移除 `langchain` 元包依赖。
+- 2026-03-13：LangChain 依赖升级到官方最新 `@langchain/core@1.1.32` 与 `@langchain/openai@1.2.13`，并确认当前 `ChatOpenAI.invoke()` + `BaseMessage[]` 方案可继续兼容。
 - 2026-03-13：新增 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL` 运行时配置，支持 OpenAI-compatible endpoint 与自定义模型名，取消旧的 `OPENAI_*` 变量命名。
 - 2026-03-13：新增 `POST /chat` 调试入口，用于在无法联调 LINE `/webhook` 时验证 LLM 调用、上下文隔离与错误返回。
 - 2026-03-13：修复 `src/routes/webhook.ts` 未接入 `LLMService` 的缺口，文本消息现已走真实 LLM 调用，并在模型异常时返回固定中文降级回复。

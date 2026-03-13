@@ -410,44 +410,47 @@ export class SchedulerService {
 
 ### 5.1 LangChain集成
 
-使用 LangChain.js 实现与大模型的对话交互。
+使用 LangChain 1.x 的 `@langchain/core` 与 `@langchain/openai` 实现与大模型的对话交互。
 
 **服务实现：**
 
 ```typescript
 import { ChatOpenAI } from '@langchain/openai';
-import { BufferMemory } from 'langchain/memory';
-import { ConversationChain } from 'langchain/chains';
+import {
+  AIMessage,
+  HumanMessage,
+  type BaseMessage,
+} from '@langchain/core/messages';
+import { config } from '../config';
 
 export class LLMService {
-  private model: ChatOpenAI;
-  private memories: Map<string, BufferMemory> = new Map();
-
-  constructor() {
-    this.model = new ChatOpenAI({
-      modelName: 'gpt-3.5-turbo',
-      temperature: 0.7,
-      openAIApiKey: process.env.OPENAI_API_KEY
-    });
-  }
-
-  private getMemory(userId: string): BufferMemory {
-    if (!this.memories.has(userId)) {
-      this.memories.set(userId, new BufferMemory());
-    }
-    return this.memories.get(userId)!;
-  }
+  private readonly model = new ChatOpenAI({
+    model: config.llmModel,
+    temperature: 0.7,
+    apiKey: config.llmApiKey,
+    configuration: config.llmBaseUrl
+      ? { baseURL: config.llmBaseUrl }
+      : undefined,
+  });
+  private readonly memories: Map<string, BaseMessage[]> = new Map();
+  private readonly maxContextMessages = 6;
 
   async chat(userId: string, message: string): Promise<string> {
-    const memory = this.getMemory(userId);
-    
-    const chain = new ConversationChain({
-      llm: this.model,
-      memory: memory
-    });
+    const history = this.memories.get(userId) ?? [];
+    const response = await this.model.invoke([
+      ...history,
+      new HumanMessage(message),
+    ]);
+    const reply =
+      typeof response.content === 'string' ? response.content : '';
+    const nextHistory = [
+      ...history,
+      new HumanMessage(message),
+      new AIMessage(reply),
+    ].slice(-this.maxContextMessages);
 
-    const response = await chain.call({ input: message });
-    return response.response;
+    this.memories.set(userId, nextHistory);
+    return reply;
   }
 }
 ```
@@ -457,7 +460,7 @@ export class LLMService {
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | context_max_length | 3 | 保留最近N条对话 |
-| memory_type | BufferMemory | 内存存储 |
+| memory_type | `Map<string, BaseMessage[]>` | 内存存储 |
 
 ---
 

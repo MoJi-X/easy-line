@@ -1,7 +1,7 @@
 # easy-line
 
 ## 环境要求
-- Node.js 18+
+- Node.js 20+
 - npm 9+
 
 ## 启动步骤
