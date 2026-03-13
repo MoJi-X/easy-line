@@ -31,6 +31,23 @@ export const errorHandler = (error: unknown, _req: Request, res: Response, _next
     return;
   }
 
+  const malformedJsonError =
+    error instanceof SyntaxError &&
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error &&
+    (error as { status?: number }).status === 400 &&
+    'body' in error;
+
+  if (malformedJsonError) {
+    res.status(400).json({
+      code: 'INVALID_ARGUMENT',
+      message: 'Malformed JSON request body.',
+      data: null,
+    });
+    return;
+  }
+
   console.error('[app] unhandled error', error);
 
   res.status(500).json({

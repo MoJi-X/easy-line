@@ -6,10 +6,14 @@ type RequiredConfigKey =
   | "LINE_CHANNEL_SECRET"
   | "LINE_CHANNEL_ACCESS_TOKEN";
 
-interface AppConfig {
+const DEFAULT_LLM_MODEL = "gpt-3.5-turbo";
+
+export interface AppConfig {
   lineChannelSecret: string;
   lineChannelAccessToken: string;
-  openAIApiKey?: string;
+  llmApiKey?: string;
+  llmBaseUrl?: string;
+  llmModel: string;
   port: number;
 }
 
@@ -25,8 +29,18 @@ const getMissingKeys = (): RequiredConfigKey[] => {
   });
 };
 
+const getOptionalEnv = (key: string): string | undefined => {
+  const value = process.env[key]?.trim();
+
+  if (!value) {
+    return undefined;
+  }
+
+  return value;
+};
+
 const parsePort = (): number => {
-  const rawPort = process.env.PORT?.trim();
+  const rawPort = getOptionalEnv("PORT");
 
   if (!rawPort) {
     return 3000;
@@ -41,6 +55,21 @@ const parsePort = (): number => {
   return parsedPort;
 };
 
+const parseLlmBaseUrl = (): string | undefined => {
+  const llmBaseUrl = getOptionalEnv("LLM_BASE_URL");
+
+  if (!llmBaseUrl) {
+    return undefined;
+  }
+
+  try {
+    new URL(llmBaseUrl);
+    return llmBaseUrl;
+  } catch {
+    throw new Error("Invalid LLM_BASE_URL. Please provide a valid URL.");
+  }
+};
+
 const missingKeys = getMissingKeys();
 
 if (missingKeys.length > 0) {
@@ -52,6 +81,8 @@ if (missingKeys.length > 0) {
 export const config: AppConfig = {
   lineChannelSecret: process.env.LINE_CHANNEL_SECRET as string,
   lineChannelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN as string,
-  openAIApiKey: process.env.OPENAI_API_KEY?.trim() || undefined,
+  llmApiKey: getOptionalEnv("LLM_API_KEY"),
+  llmBaseUrl: parseLlmBaseUrl(),
+  llmModel: getOptionalEnv("LLM_MODEL") ?? DEFAULT_LLM_MODEL,
   port: parsePort(),
 };

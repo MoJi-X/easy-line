@@ -26,7 +26,7 @@
 - inputs：API 文档 1.4、1.5、4.3、6.1；架构文档 5.2、5.4。
 - outputs：内部接口返回规范、错误码表、路由约束。
 - dependencies：`specs/30-scheduler-push.spec.md` 的 SCH-003。
-- implementation notes：`POST /webhook` 维持 LINE 回调风格 `{status: 'ok'}`；内部接口如 `/api/tasks`、`/api/tasks/:taskId/execute` 可采用通用 `code/message/data` 结构；错误码仅保留参数错误、资源不存在、签名失败、内部错误、第三方服务错误这组最小集合。
+- implementation notes：`POST /webhook` 维持 LINE 回调风格 `{status: 'ok'}`；内部接口如 `/api/tasks`、`/api/tasks/:taskId/execute` 以及调试入口 `/chat` 可采用通用 `code/message/data` 结构；错误码仅保留参数错误、资源不存在、签名失败、内部错误、第三方服务错误这组最小集合。
 - acceptance criteria：内部接口返回格式一致；错误路径有稳定结构；Webhook 不被内部管理接口规范误伤。
 
 ### GOV-002 Demo 级错误处理与健康检查
@@ -47,7 +47,7 @@
 
 ## 验收与测试
 - 单元验证：错误码映射、统一响应包装、日志字段格式。
-- 集成验证：`/health`、`/api/tasks`、`/api/tasks/:taskId/execute` 在正常与异常情况下都可返回稳定结构。
+- 集成验证：`/health`、`/chat`、`/api/tasks`、`/api/tasks/:taskId/execute` 在正常与异常情况下都可返回稳定结构。
 - 管理验收：四份 spec 可以覆盖当前 Demo 开发任务，团队按 spec 顺序推进不会出现模块责任重叠。
 
 ## 风险与回退
@@ -56,6 +56,6 @@
 - 回退：治理项只保留最小集合；超出 Demo 范围的安全、性能和运维工作统一记录为延期项。
 
 ## 实现进展
-- 本次提交完成：GOV-001、GOV-002 的最小集合（`code/message/data` 响应结构、错误处理中间件、`/health` 与内部接口共存）。
+- 本次提交完成：GOV-001、GOV-002 的最小集合（`code/message/data` 响应结构、错误处理中间件、`/health`、`/chat` 与内部接口共存）。
 - 当前阻塞：签名失败与第三方错误的自动化测试尚未补齐，仅完成运行时错误映射。
 - 下一步建议：推进 GOV-003，补充 Spec 驱动流程中的延期项模板与验收脚本。

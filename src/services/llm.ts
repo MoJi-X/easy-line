@@ -1,6 +1,9 @@
 import { ChatOpenAI } from "@langchain/openai";
-import { ConversationChain } from "langchain/chains";
-import { BufferMemory } from "langchain/memory";
+import {
+  AIMessage,
+  HumanMessage,
+  type BaseMessage,
+} from "@langchain/core/messages";
 
 import { config } from "../config";
 
@@ -24,7 +27,7 @@ export class LLMServiceError extends Error {
   }
 }
 
-const userMemories = new Map<string, BufferMemory>();
+const userMemories = new Map<string, BaseMessage[]>();
 
 const maskUserId = (userId: string): string => {
   if (userId.length < 6) {
@@ -39,16 +42,21 @@ const logError = (userId: string, errorType: LLMServiceErrorType): void => {
 };
 
 const createModel = (): ChatOpenAI => {
-  if (!config.openAIApiKey) {
-    throw new LLMServiceError("MISSING_API_KEY", "OPENAI_API_KEY is missing");
+  if (!config.llmApiKey) {
+    throw new LLMServiceError("MISSING_API_KEY", "LLM_API_KEY is missing");
   }
 
   try {
     return new ChatOpenAI({
-      model: "gpt-3.5-turbo",
+      model: config.llmModel,
       temperature: 0.7,
-      openAIApiKey: config.openAIApiKey,
+      apiKey: config.llmApiKey,
       timeout: 8000,
+      configuration: config.llmBaseUrl
+        ? {
+            baseURL: config.llmBaseUrl,
+          }
+        : undefined,
     });
   } catch (error) {
     throw new LLMServiceError(
@@ -59,55 +67,78 @@ const createModel = (): ChatOpenAI => {
   }
 };
 
-const getOrCreateMemory = (userId: string): BufferMemory => {
-  const existingMemory = userMemories.get(userId);
+const getOrCreateHistory = (userId: string): BaseMessage[] => {
+  const existingHistory = userMemories.get(userId);
 
-  if (existingMemory) {
-    return existingMemory;
+  if (existingHistory) {
+    return existingHistory;
   }
 
-  const memory = new BufferMemory({
-    memoryKey: "history",
-    inputKey: "input",
-    outputKey: "response",
-    returnMessages: true,
-  });
+  const history: BaseMessage[] = [];
+  userMemories.set(userId, history);
 
-  userMemories.set(userId, memory);
-
-  return memory;
+  return history;
 };
 
-const trimMemory = async (memory: BufferMemory): Promise<void> => {
-  const messages = await memory.chatHistory.getMessages();
-
+const trimHistory = (messages: BaseMessage[]): BaseMessage[] => {
   if (messages.length <= MAX_CONTEXT_MESSAGES) {
-    return;
+    return messages;
   }
 
-  const recentMessages = messages.slice(-MAX_CONTEXT_MESSAGES);
+  return messages.slice(-MAX_CONTEXT_MESSAGES);
+};
 
-  await memory.chatHistory.clear();
+const buildRequestMessages = (
+  history: BaseMessage[],
+  message: string,
+): BaseMessage[] => {
+  return [...history, new HumanMessage(message)];
+};
 
-  for (const msg of recentMessages) {
-    await memory.chatHistory.addMessage(msg);
+const extractTextFromContentPart = (part: unknown): string => {
+  if (typeof part === "string") {
+    return part;
   }
+
+  if (!part || typeof part !== "object") {
+    return "";
+  }
+
+  if ("text" in part && typeof part.text === "string") {
+    return part.text;
+  }
+
+  return "";
+};
+
+const normalizeResponseText = (content: unknown): string => {
+  if (typeof content === "string") {
+    return content.trim();
+  }
+
+  if (Array.isArray(content)) {
+    return content.map(extractTextFromContentPart).join("").trim();
+  }
+
+  return "";
 };
 
 export const LLMService = {
   async chat(userId: string, message: string): Promise<string> {
-    const memory = getOrCreateMemory(userId);
+    const history = getOrCreateHistory(userId);
+    const requestMessages = buildRequestMessages(history, message);
 
     try {
-      const chain = new ConversationChain({
-        llm: createModel(),
-        memory,
-      });
+      const response = await createModel().invoke(requestMessages);
+      const responseText = normalizeResponseText(response.content);
+      const nextHistory = trimHistory([
+        ...requestMessages,
+        new AIMessage(responseText),
+      ]);
 
-      const response = await chain.call({ input: message });
-      await trimMemory(memory);
+      userMemories.set(userId, nextHistory);
 
-      return String(response.response ?? "");
+      return responseText;
     } catch (error) {
       if (error instanceof LLMServiceError) {
         logError(userId, error.type);

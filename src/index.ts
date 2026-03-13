@@ -2,6 +2,7 @@ import express, { type Request, type Response } from 'express';
 
 import { config } from './config';
 import webhookRouter from './routes/webhook';
+import chatRouter from './routes/chat';
 import taskRouter from './routes/tasks';
 import { schedulerService } from './services/scheduler';
 import { errorHandler, notFoundHandler } from './errors/error-handler';
@@ -14,6 +15,7 @@ app.get('/health', (_req: Request, res: Response) => {
 
 app.use(webhookRouter);
 app.use(express.json());
+app.use(chatRouter);
 app.use('/api', taskRouter);
 
 app.use(notFoundHandler);

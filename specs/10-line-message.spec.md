@@ -26,7 +26,7 @@
 - inputs：需求文档 6.1、7、9.1；架构文档 7.1；API 文档 8.3。
 - outputs：`src/index.ts`、`src/config/index.ts`、`.env.example`。
 - dependencies：无。
-- implementation notes：环境变量名称以需求文档为准，使用 `LINE_CHANNEL_SECRET`、`LINE_CHANNEL_ACCESS_TOKEN`、`OPENAI_API_KEY`、`PORT`；缺少关键配置时快速失败。
+- implementation notes：环境变量名称以需求文档为准，使用 `LINE_CHANNEL_SECRET`、`LINE_CHANNEL_ACCESS_TOKEN`、`LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`、`PORT`；缺少关键 LINE 配置时快速失败，LLM 配置可选且在提供时执行格式校验。
 - acceptance criteria：应用可在本地启动；`GET /health` 返回 200；关键环境变量缺失时能明确报错。
 
 ### LINE-002 LINE SDK 封装与 Webhook 路由
