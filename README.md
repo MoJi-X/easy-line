@@ -77,3 +77,8 @@ curl -X POST http://localhost:3000/chat \
   }
 }
 ```
+
+## 日志
+- 通用运行时 `INFO/WARN/ERROR` 会同时输出到控制台和 `logs/app.log`。
+- 调度器生命周期与任务执行日志会同时输出到控制台和 `logs/scheduler.log`。
+- 日志默认只记录安全字段，不记录密钥、令牌、完整请求体或完整消息正文。

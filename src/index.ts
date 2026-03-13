@@ -1,53 +1,92 @@
+import type { Server } from 'node:http';
+
 import express, { type Request, type Response } from 'express';
 
-import { config } from './config';
-import webhookRouter from './routes/webhook';
-import chatRouter from './routes/chat';
-import taskRouter from './routes/tasks';
-import { schedulerService } from './services/scheduler';
 import { errorHandler, notFoundHandler } from './errors/error-handler';
+import { appLogger } from './utils/app-logger';
 
-const app = express();
+type ShutdownReason = NodeJS.Signals | 'uncaughtException' | 'bootstrapFailure';
 
-app.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({ status: 'ok' });
-});
-
-app.use(webhookRouter);
-app.use(express.json());
-app.use(chatRouter);
-app.use('/api', taskRouter);
-
-app.use(notFoundHandler);
-app.use(errorHandler);
-
-schedulerService.start();
-
-const server = app.listen(config.port, () => {
-  console.info(`Server is running on port ${config.port}`);
-});
-
+let server: Server | null = null;
 let isShuttingDown = false;
+let schedulerService: import('./services/scheduler').SchedulerService | null = null;
 
-const shutdown = (signal: NodeJS.Signals): void => {
+const shutdown = (reason: ShutdownReason, exitCode = 0): void => {
   if (isShuttingDown) {
     return;
   }
 
   isShuttingDown = true;
-  console.info(`[app] received ${signal}, shutting down`);
-  schedulerService.stop();
+  appLogger.info('application shutdown started', { reason, exitCode });
+
+  if (schedulerService) {
+    schedulerService.stop();
+  }
+
+  if (!server) {
+    process.exit(exitCode);
+    return;
+  }
 
   server.close(() => {
-    console.info('[app] HTTP server closed');
-    process.exit(0);
+    appLogger.info('HTTP server closed', { reason, exitCode });
+    process.exit(exitCode);
   });
 };
 
+process.on('unhandledRejection', (reason) => {
+  appLogger.error('unhandled promise rejection', {}, reason);
+});
+
+process.on('uncaughtException', (error) => {
+  appLogger.error('uncaught exception', {}, error);
+  shutdown('uncaughtException', 1);
+});
+
 process.once('SIGINT', () => {
+  appLogger.info('shutdown signal received', { signal: 'SIGINT' });
   shutdown('SIGINT');
 });
 
 process.once('SIGTERM', () => {
+  appLogger.info('shutdown signal received', { signal: 'SIGTERM' });
   shutdown('SIGTERM');
 });
+
+const bootstrap = (): void => {
+  try {
+    const { config } = require('./config') as typeof import('./config');
+    const webhookRouter = (require('./routes/webhook') as typeof import('./routes/webhook')).default;
+    const chatRouter = (require('./routes/chat') as typeof import('./routes/chat')).default;
+    const taskRouter = (require('./routes/tasks') as typeof import('./routes/tasks')).default;
+
+    schedulerService = (
+      require('./services/scheduler') as typeof import('./services/scheduler')
+    ).schedulerService;
+
+    const app = express();
+
+    app.get('/health', (_req: Request, res: Response) => {
+      res.status(200).json({ status: 'ok' });
+    });
+
+    app.use(webhookRouter);
+    app.use(express.json());
+    app.use(chatRouter);
+    app.use('/api', taskRouter);
+
+    app.use(notFoundHandler);
+    app.use(errorHandler);
+
+    schedulerService.start();
+
+    server = app.listen(config.port, () => {
+      appLogger.info('server started', { port: config.port });
+    });
+  } catch (error) {
+    appLogger.error('application bootstrap failed', {}, error);
+    shutdown('bootstrapFailure', 1);
+  }
+};
+
+bootstrap();

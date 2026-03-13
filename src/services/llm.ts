@@ -6,10 +6,13 @@ import {
 } from "@langchain/core/messages";
 
 import { config } from "../config";
+import { createAppLogger } from "../utils/app-logger";
+import { maskUserId } from "../utils/logger";
 
 const MODULE_NAME = "LLMService";
 const MAX_CONTEXT_ROUNDS = 3;
 const MAX_CONTEXT_MESSAGES = MAX_CONTEXT_ROUNDS * 2;
+const llmLogger = createAppLogger("llm");
 
 export type LLMServiceErrorType =
   | "MISSING_API_KEY"
@@ -29,16 +32,20 @@ export class LLMServiceError extends Error {
 
 const userMemories = new Map<string, BaseMessage[]>();
 
-const maskUserId = (userId: string): string => {
-  if (userId.length < 6) {
-    return "****";
-  }
-
-  return `${userId.slice(0, 2)}***${userId.slice(-2)}`;
-};
-
-const logError = (userId: string, errorType: LLMServiceErrorType): void => {
-  console.error(`[${MODULE_NAME}] user=${maskUserId(userId)} errorType=${errorType}`);
+const logError = (
+  userId: string,
+  errorType: LLMServiceErrorType,
+  error?: unknown,
+): void => {
+  llmLogger.error(
+    "llm request failed",
+    {
+      service: MODULE_NAME,
+      userId: maskUserId(userId),
+      errorType,
+    },
+    error,
+  );
 };
 
 const createModel = (): ChatOpenAI => {
@@ -137,11 +144,19 @@ export const LLMService = {
       ]);
 
       userMemories.set(userId, nextHistory);
-
+      llmLogger.info(
+        "llm response generated",
+        {
+          service: MODULE_NAME,
+          userId: maskUserId(userId),
+          contextMessageCount: requestMessages.length,
+          responseLength: responseText.length,
+        },
+      );
       return responseText;
     } catch (error) {
       if (error instanceof LLMServiceError) {
-        logError(userId, error.type);
+        logError(userId, error.type, error);
         throw error;
       }
 
@@ -151,7 +166,7 @@ export const LLMService = {
         error,
       );
 
-      logError(userId, wrappedError.type);
+      logError(userId, wrappedError.type, wrappedError);
       throw wrappedError;
     }
   },

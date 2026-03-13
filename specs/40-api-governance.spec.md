@@ -34,7 +34,7 @@
 - inputs：需求文档 4.1、4.2；API 文档 6.1、6.2；架构文档 5.4、6.2。
 - outputs：统一错误处理中间件、`GET /health`、基础日志字段。
 - dependencies：`specs/10-line-message.spec.md`、`specs/20-llm-context.spec.md`、`specs/30-scheduler-push.spec.md`。
-- implementation notes：保留 Demo 最低能力即可；`/ready` 可作为可选项，不阻塞首版；日志必须能区分 Webhook、LLM、Scheduler 三类错误来源；敏感配置不输出到日志。
+- implementation notes：保留 Demo 最低能力即可；`/ready` 可作为可选项，不阻塞首版；日志必须能区分 Webhook、LLM、Scheduler 三类错误来源；运行时 `INFO/WARN/ERROR` 写入 `logs/app.log`，Scheduler 继续写 `logs/scheduler.log`；敏感配置、完整消息正文和完整请求体不输出到日志。
 - acceptance criteria：服务启动后能通过 `/health` 判断基本状态；异常时有足够日志定位失败模块；不会因为单个任务失败拖垮整体服务。
 
 ### GOV-003 Spec 驱动的快速迭代机制
@@ -57,5 +57,6 @@
 
 ## 实现进展
 - 本次提交完成：GOV-001、GOV-002 的最小集合（`code/message/data` 响应结构、错误处理中间件、`/health`、`/chat` 与内部接口共存）。
+- 2026-03-13：补充通用运行时日志落盘，新增 `logs/app.log` 记录应用启动、Webhook、LLM、HTTP 错误和进程级异常，`logs/scheduler.log` 保持调度器专用。
 - 当前阻塞：签名失败与第三方错误的自动化测试尚未补齐，仅完成运行时错误映射。
 - 下一步建议：推进 GOV-003，补充 Spec 驱动流程中的延期项模板与验收脚本。
