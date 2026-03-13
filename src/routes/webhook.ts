@@ -7,8 +7,10 @@ import {
 } from '@line/bot-sdk';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import { lineService } from '../services/line';
+import { LLMService, LLMServiceError } from '../services/llm';
 
 const channelSecret = process.env.LINE_CHANNEL_SECRET;
+const FALLBACK_REPLY_TEXT = '抱歉，我現在暫時無法回答，請稍後再試。';
 
 if (!channelSecret) {
   throw new Error('Missing required env: LINE_CHANNEL_SECRET');
@@ -24,6 +26,19 @@ const isTextMessageEvent = (event: WebhookEvent): event is MessageEvent & { mess
   return event.type === 'message' && event.message.type === 'text';
 };
 
+const generateReplyText = async (userId: string, userText: string): Promise<string> => {
+  try {
+    return await LLMService.chat(userId, userText);
+  } catch (error) {
+    if (error instanceof LLMServiceError) {
+      console.warn(`[webhook] fallback reply for userId=${userId}, errorType=${error.type}`);
+      return FALLBACK_REPLY_TEXT;
+    }
+
+    throw error;
+  }
+};
+
 const handleEvent = async (event: WebhookEvent): Promise<void> => {
   if (!isTextMessageEvent(event)) {
     console.info(`[webhook] skip non-text event: type=${event.type}`);
@@ -35,10 +50,11 @@ const handleEvent = async (event: WebhookEvent): Promise<void> => {
   const userText = event.message.text;
 
   console.info(`[webhook] text event received from userId=${userId}, text="${userText}"`);
+  const replyText = await generateReplyText(userId, userText);
 
   await lineService.replyMessage(replyToken, {
     type: 'text',
-    text: '收到你的訊息了，目前先使用固定回覆，LLM 功能準備中。',
+    text: replyText,
   });
 };
 

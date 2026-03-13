@@ -71,6 +71,7 @@
 - 2026-03-13：为解决 `npm install` 在 npm 11 下的 LangChain peer 冲突，改为直接使用 `@langchain/openai` + `@langchain/core/messages` 维护 3 轮上下文，移除 `langchain` 元包依赖。
 - 2026-03-13：新增 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL` 运行时配置，支持 OpenAI-compatible endpoint 与自定义模型名，取消旧的 `OPENAI_*` 变量命名。
 - 2026-03-13：新增 `POST /chat` 调试入口，用于在无法联调 LINE `/webhook` 时验证 LLM 调用、上下文隔离与错误返回。
-- 当前阻塞点：待补真实 LINE/OpenAI 凭证后进行联调验证。
+- 2026-03-13：修复 `src/routes/webhook.ts` 未接入 `LLMService` 的缺口，文本消息现已走真实 LLM 调用，并在模型异常时返回固定中文降级回复。
+- 当前阻塞点：待补真实 LINE Webhook 与 OpenAI-compatible 服务联调验证。
 - 下一步：推进 `specs/30-scheduler-push.spec.md`。
 
