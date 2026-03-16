@@ -9,6 +9,7 @@
 | 文档 | 章节 | 用途 |
 | --- | --- | --- |
 | `docs/07_LangChain_Agent_告警分析到工单创建_集成开发指导.md` | 1、2、3、4、6、7、9、10、11、12、13、14 | 告警域接口、Tool 设计、SSE 处理、错误模型与最小落地方案 |
+| `docs/08_Flex_Message构建方案说明.md` | 4.2、4.3 | Flex Message 构建方式选择与降级策略 |
 | `docs/需求规格说明书.md` | 3.2、4.1、4.2、4.3、5.1、6.1 | Tool Registry、外部调用超时、日志脱敏与技术栈边界 |
 | `specs/20-agent-orchestrator.spec.md` | AGT-001、AGT-003 | 统一 Agent 入口与 Tool Registry 接入基线 |
 
@@ -19,6 +20,7 @@
 | `specs/20-agent-orchestrator.spec.md` | hard | 告警 Tool 最终需要通过统一 Tool Registry 接入 Agent |
 | `axios` | hard | 负责告警 HTTP 请求与流式响应读取 |
 | `specs/26-alarm-agent-workflow.spec.md` | downstream | Agent 状态机依赖本 spec 的 Tool 契约 |
+| `specs/26.5-flex-message-builder.spec.md` | downstream | 告警分析结果可由 Flex Message 构建器转换为展示格式 |
 | `specs/40-api-governance.spec.md` | soft | 错误码、日志与外部服务异常映射需服从治理约束 |
 
 ## 任务拆分

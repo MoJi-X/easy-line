@@ -7,10 +7,14 @@ type RequiredConfigKey =
   | "LINE_CHANNEL_ACCESS_TOKEN";
 
 const DEFAULT_LLM_MODEL = "gpt-3.5-turbo";
+const DEFAULT_FLEX_MESSAGE_BUILDER = "code";
+
+export type FlexMessageBuilderType = "code" | "llm";
 
 export interface AppConfig {
   alarmAgentBaseUrl?: string;
   alarmAgentTimeoutMs: number;
+  flexMessageBuilder: FlexMessageBuilderType;
   lineChannelSecret: string;
   lineChannelAccessToken: string;
   llmApiKey?: string;
@@ -142,6 +146,22 @@ const parseBooleanEnv = (key: string, defaultValue: boolean): boolean => {
   );
 };
 
+const parseFlexMessageBuilder = (): FlexMessageBuilderType => {
+  const rawValue = getOptionalEnv("FLEX_MESSAGE_BUILDER");
+
+  if (!rawValue) {
+    return DEFAULT_FLEX_MESSAGE_BUILDER as FlexMessageBuilderType;
+  }
+
+  const normalizedValue = rawValue.toLowerCase().trim();
+
+  if (normalizedValue === "code" || normalizedValue === "llm") {
+    return normalizedValue;
+  }
+
+  return DEFAULT_FLEX_MESSAGE_BUILDER as FlexMessageBuilderType;
+};
+
 const missingKeys = getMissingKeys();
 
 if (missingKeys.length > 0) {
@@ -153,6 +173,7 @@ if (missingKeys.length > 0) {
 export const config: AppConfig = {
   alarmAgentBaseUrl: parseOptionalUrl("ALARM_AGENT_BASE_URL"),
   alarmAgentTimeoutMs: parsePositiveIntegerEnv("ALARM_AGENT_TIMEOUT_MS", 10000),
+  flexMessageBuilder: parseFlexMessageBuilder(),
   lineChannelSecret: process.env.LINE_CHANNEL_SECRET as string,
   lineChannelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN as string,
   llmApiKey: getOptionalEnv("LLM_API_KEY"),

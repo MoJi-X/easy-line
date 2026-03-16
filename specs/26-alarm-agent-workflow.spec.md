@@ -9,6 +9,7 @@
 | 文档 | 章节 | 用途 |
 | --- | --- | --- |
 | `docs/07_LangChain_Agent_告警分析到工单创建_集成开发指导.md` | 2、3.2、5、6、8、12、13、14 | 主链路执行顺序、确认节点、状态字段、system prompt 约束 |
+| `docs/08_Flex_Message构建方案说明.md` | 4.2、4.3 | Flex Message 构建方式选择与降级策略 |
 | `docs/08_告警分析与工单创建接入改造方案.md` | 3、4、5、6 | 当前仓库的文件级改造落点与全局建单配置策略 |
 | `docs/需求规格说明书.md` | 3.1、3.2、4.1、4.3、5.2 | 统一 Agent 入口、上下文记忆、错误降级与 `/chat` 一致性 |
 | `specs/20-agent-orchestrator.spec.md` | AGT-001、AGT-002、AGT-004 | 统一消息入口与用户级会话容器基线 |
@@ -18,6 +19,7 @@
 | --- | --- | --- |
 | `specs/20-agent-orchestrator.spec.md` | hard | 告警工作流建立在统一 Agent 与短期消息记忆之上 |
 | `specs/25-alarm-integration-tools.spec.md` | hard | 状态机依赖告警 Tool 的稳定输入输出契约 |
+| `specs/26.5-flex-message-builder.spec.md` | hard | 告警分析结果需转换为 Flex Message 展示给用户 |
 | `specs/27-workorder-dispatch.spec.md` | downstream | 人机确认后的建单动作由下游 spec 完成 |
 | `specs/40-api-governance.spec.md` | soft | `/chat` 入参、错误响应和日志规则需保持一致 |
 

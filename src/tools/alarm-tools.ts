@@ -8,6 +8,10 @@ import {
   type AlarmSseEvent,
 } from "../clients/alarm-agent-client";
 import { config } from "../config";
+import {
+  buildAlarmAnalysisFlexMessageWithFallback,
+  type FlexMessage,
+} from "../services/flex-message-builder";
 import { createAppLogger } from "../utils/app-logger";
 
 const DEFAULT_ALARM_LIST_PAGE = 1;
@@ -72,6 +76,7 @@ export interface ListAlarmsSuccess {
 
 export interface AnalyzeAlarmSuccess {
   analysis_markdown: string;
+  flex_message: FlexMessage;
   raw_events: AlarmSseEvent[];
   recommended_action_hint: "create_work_order" | null;
   session_id: string;
@@ -1032,12 +1037,27 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
 
         const shouldOfferDispatch =
           detectDispatchRecommendation(analysisMarkdown);
+        const recommendedActionHint =
+          shouldOfferDispatch === true ? 'create_work_order' : null;
+
+        const alarmRecord = normalizeAlarmRecord(
+          normalizedInput.alarms[0] as Record<string, unknown>,
+        );
+
+        const flexMessage = await buildAlarmAnalysisFlexMessageWithFallback(
+          alarmRecord,
+          analysisMarkdown,
+          recommendedActionHint,
+          shouldOfferDispatch,
+          undefined,
+        );
 
         alarmToolLogger.debug('analyze_alarm output', {
           sessionId: normalizedInput.session_id,
           eventCount: streamResult.events.length,
           analysisLength: analysisMarkdown.length,
           shouldOfferDispatch,
+          flexMessageBuilt: true,
           durationMs: Date.now() - startedAt,
         });
 
@@ -1045,10 +1065,10 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
           success: true,
           session_id: normalizedInput.session_id,
           analysis_markdown: analysisMarkdown,
+          flex_message: flexMessage,
           raw_events: streamResult.events,
           should_offer_dispatch: shouldOfferDispatch,
-          recommended_action_hint:
-            shouldOfferDispatch === true ? 'create_work_order' : null,
+          recommended_action_hint: recommendedActionHint,
         };
       } catch (error) {
         alarmToolLogger.warn('analyze_alarm failed', {
@@ -1063,9 +1083,10 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
     {
       name: ANALYZE_ALARM_TOOL_NAME,
       description: [
-        '分析指定告警并返回结构化 analysis_markdown。',
+        '分析指定告警并返回结构化 analysis_markdown 和 flex_message。',
         '调用 /api/v1/process_alarms 时，会优先从告警对象里的 raw_data 解析原始告警并填入 alarms 数组，同时确保 id 不为空。',
         '这个工具会消费告警后端的 SSE 响应，不会把原始 SSE 文本直接暴露给 Agent。',
+        '返回的 flex_message 可直接用于 LINE Bot 发送。',
       ].join(' '),
       schema: ANALYZE_ALARM_SCHEMA,
     },
