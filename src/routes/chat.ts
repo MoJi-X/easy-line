@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 
 import { AppError } from '../errors/app-error';
-import { LLMService, LLMServiceError } from '../services/llm';
+import { messageBridgeService } from '../services/message-bridge';
 
 interface ChatRequestBody {
   userId?: unknown;
@@ -27,18 +27,6 @@ const getRequiredTextField = (
   return normalizedValue;
 };
 
-const mapLLMServiceError = (error: LLMServiceError): AppError => {
-  switch (error.type) {
-    case 'MISSING_API_KEY':
-    case 'MODEL_INIT_FAILED':
-      return new AppError(500, 'INTERNAL_ERROR', error.message);
-    case 'MODEL_CALL_FAILED':
-      return new AppError(502, 'EXTERNAL_SERVICE_ERROR', error.message);
-    default:
-      return new AppError(500, 'INTERNAL_ERROR', 'Internal server error.');
-  }
-};
-
 router.post(
   '/chat',
   async (
@@ -49,7 +37,11 @@ router.post(
     try {
       const userId = getRequiredTextField(req.body?.userId, 'userId');
       const message = getRequiredTextField(req.body?.message, 'message');
-      const reply = await LLMService.chat(userId, message);
+      const bridgeResult = await messageBridgeService.processUserMessage({
+        channel: 'chat_api',
+        userId,
+        message,
+      });
 
       res.json({
         code: 'OK',
@@ -57,15 +49,12 @@ router.post(
         data: {
           userId,
           message,
-          reply,
+          reply: bridgeResult.replyText,
+          handler: bridgeResult.handler,
+          usedTools: bridgeResult.usedTools,
         },
       });
     } catch (error) {
-      if (error instanceof LLMServiceError) {
-        next(mapLLMServiceError(error));
-        return;
-      }
-
       next(error);
     }
   },

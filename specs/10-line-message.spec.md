@@ -42,7 +42,7 @@
 - inputs：需求文档 3.1、8.1；架构文档 5.1；API 文档 2.2。
 - outputs：消息桥接 DTO、Webhook 事件过滤逻辑、默认回复回退接口。
 - dependencies：LINE-002；对 `specs/20-agent-orchestrator.spec.md` 为软依赖。
-- implementation notes：Webhook 路由只负责事件过滤、去重、日志和桥接，不直连单一 LLM `chat()`；为后续 Agent 接入预留单一 `processUserMessage()` 调用点，未接入前允许使用固定 fallback 保证链路可演示。
+- implementation notes：Webhook 路由只负责事件过滤、去重、日志和桥接，不直连单一 LLM `chat()`；为后续 Agent 接入预留单一 `processUserMessage()` 调用点，未接入前允许使用固定 fallback 保证链路可演示；本轮切片同步让 `POST /chat` 复用同一桥接入口，确保调试链路不再依赖旧 LLM 主链路。
 - acceptance criteria：文本消息能进入统一桥接入口；非文本消息安全跳过；异常不会导致服务退出。
 
 ## 验收与测试

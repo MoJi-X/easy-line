@@ -3,18 +3,17 @@ import {
   type MiddlewareConfig,
   type WebhookEvent,
   type MessageEvent,
-  type Message,
   type TextMessage,
 } from '@line/bot-sdk';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 
-import { lineService } from '../services/line';
-import { LLMService, LLMServiceError } from '../services/llm';
+import { buildTextMessage, lineService } from '../services/line';
+import { messageBridgeService } from '../services/message-bridge';
 import { createAppLogger } from '../utils/app-logger';
 import { maskToken, maskUserId } from '../utils/logger';
 
 const channelSecret = process.env.LINE_CHANNEL_SECRET;
-const FALLBACK_REPLY_TEXT = '抱歉，我现在暂时无法回答，请稍后再试。';
+const FALLBACK_REPLY_TEXT = '抱歉，我现在暂时无法处理你的消息，请稍后再试。';
 const webhookLogger = createAppLogger('webhook');
 const EVENT_DEDUP_TTL_MS = 20 * 60 * 1000;
 
@@ -23,6 +22,15 @@ type WebhookEventProcessingStatus = 'processing' | 'completed' | 'failed';
 interface ProcessedWebhookEventRecord {
   status: WebhookEventProcessingStatus;
   expiresAt: number;
+}
+
+export interface WebhookTextMessageBridgeRequest {
+  webhookEventId: string;
+  replyToken: string;
+  userId: string;
+  messageId?: string;
+  messageText: string;
+  isRedelivery?: boolean;
 }
 
 const processedWebhookEvents = new Map<string, ProcessedWebhookEventRecord>();
@@ -49,20 +57,29 @@ const isReplyableEvent = (
   return 'replyToken' in event && typeof event.replyToken === 'string';
 };
 
-const getEventUserId = (event: WebhookEvent): string | undefined => {
-  if (!isTextMessageEvent(event)) {
-    return undefined;
+export const extractWebhookTextMessage = (
+  event: WebhookEvent,
+): WebhookTextMessageBridgeRequest | null => {
+  if (!isTextMessageEvent(event) || !isReplyableEvent(event)) {
+    return null;
   }
 
-  return event.source.userId ?? 'unknown-user';
+  return {
+    webhookEventId: event.webhookEventId,
+    replyToken: event.replyToken,
+    userId: event.source.userId ?? 'unknown-user',
+    messageId: event.message.id,
+    messageText: event.message.text,
+    isRedelivery: event.deliveryContext?.isRedelivery,
+  };
+};
+
+const getEventUserId = (event: WebhookEvent): string | undefined => {
+  return extractWebhookTextMessage(event)?.userId;
 };
 
 const getEventMessageId = (event: WebhookEvent): string | undefined => {
-  if (!isTextMessageEvent(event)) {
-    return undefined;
-  }
-
-  return event.message.id;
+  return extractWebhookTextMessage(event)?.messageId;
 };
 
 const buildEventLogContext = (event: WebhookEvent) => {
@@ -106,33 +123,40 @@ const markWebhookEvent = (
   });
 };
 
-const buildReplyMessage = (text: string): Message => {
-  const normalizedText = text.trim();
-
-  return {
-    type: 'text',
-    text: normalizedText.length > 0
-      ? normalizedText.slice(0, 5000)
-      : FALLBACK_REPLY_TEXT,
-  };
+const replyToWebhookTextMessage = async (
+  request: WebhookTextMessageBridgeRequest,
+  replyText: string,
+): Promise<void> => {
+  await lineService.replyMessage(
+    request.replyToken,
+    buildTextMessage(replyText),
+    {
+      webhookEventId: request.webhookEventId,
+      replyToken: request.replyToken,
+      userId: request.userId,
+      isRedelivery: request.isRedelivery,
+    },
+  );
 };
 
-const generateReplyText = async (
-  userId: string,
-  userText: string,
-): Promise<string> => {
+const sendFallbackReply = async (
+  request: WebhookTextMessageBridgeRequest,
+): Promise<boolean> => {
   try {
-    return await LLMService.chat(userId, userText);
+    await replyToWebhookTextMessage(request, FALLBACK_REPLY_TEXT);
+    return true;
   } catch (error) {
-    if (error instanceof LLMServiceError) {
-      webhookLogger.warn('webhook fallback reply used', {
-        userId: maskUserId(userId),
-        errorType: error.type,
-      });
-      return FALLBACK_REPLY_TEXT;
-    }
-
-    throw error;
+    webhookLogger.error(
+      'failed to send webhook fallback reply',
+      {
+        webhookEventId: request.webhookEventId,
+        userId: maskUserId(request.userId),
+        messageId: request.messageId,
+        replyToken: maskToken(request.replyToken),
+      },
+      error,
+    );
+    return false;
   }
 };
 
@@ -163,40 +187,52 @@ const handleEvent = async (event: WebhookEvent): Promise<void> => {
     return;
   }
 
-  const replyToken = event.replyToken;
-  const userId = event.source.userId ?? 'unknown-user';
-  const userText = event.message.text;
+  const textMessage = extractWebhookTextMessage(event);
+
+  if (!textMessage) {
+    webhookLogger.warn('webhook text event skipped because reply context is missing', {
+      ...eventContext,
+      duplicate: false,
+      durationMs: Date.now() - startedAt,
+    });
+    markWebhookEvent(event.webhookEventId, 'failed');
+    return;
+  }
 
   webhookLogger.info('webhook text event received', {
     ...eventContext,
     duplicate: false,
-    messageLength: userText.length,
+    messageLength: textMessage.messageText.length,
   });
 
   try {
-    const replyText = await generateReplyText(userId, userText);
-    const replyMessage = buildReplyMessage(replyText);
-
-    await lineService.replyMessage(replyToken, replyMessage, {
-      webhookEventId: event.webhookEventId,
-      replyToken,
-      userId: maskUserId(userId),
-      isRedelivery: event.deliveryContext?.isRedelivery,
+    const bridgeResult = await messageBridgeService.processUserMessage({
+      channel: 'line_webhook',
+      userId: textMessage.userId,
+      message: textMessage.messageText,
+      webhookEventId: textMessage.webhookEventId,
+      messageId: textMessage.messageId,
     });
+
+    await replyToWebhookTextMessage(textMessage, bridgeResult.replyText);
 
     markWebhookEvent(event.webhookEventId, 'completed');
     webhookLogger.info('webhook event processed', {
       ...eventContext,
       duplicate: false,
+      handler: bridgeResult.handler,
       durationMs: Date.now() - startedAt,
     });
   } catch (error) {
-    markWebhookEvent(event.webhookEventId, 'failed');
+    const fallbackSent = await sendFallbackReply(textMessage);
+
+    markWebhookEvent(event.webhookEventId, fallbackSent ? 'completed' : 'failed');
     webhookLogger.error(
       'failed to process webhook event',
       {
         ...eventContext,
         duplicate: false,
+        fallbackSent,
         durationMs: Date.now() - startedAt,
       },
       error,
@@ -231,7 +267,7 @@ router.post(
     try {
       const events = ((req.body as { events?: WebhookEvent[] }).events ?? []) as WebhookEvent[];
 
-      // Ack immediately so LINE will not redeliver while we are still doing LLM work.
+      // Ack immediately so LINE will not redeliver while the bridge handles events asynchronously.
       res.json({ status: 'ok' });
 
       void processWebhookEvents(events);

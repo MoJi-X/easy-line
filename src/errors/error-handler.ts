@@ -39,20 +39,21 @@ export const errorHandler = (error: unknown, req: Request, res: Response, _next:
   }
 
   const lineSignatureError =
-    typeof error === 'object' &&
-    error !== null &&
-    'status' in error &&
-    (error as { status?: number }).status === 401;
+    (typeof error === 'object' &&
+      error !== null &&
+      'status' in error &&
+      (error as { status?: number }).status === 401) ||
+    (error instanceof Error && error.name === 'SignatureValidationFailed');
 
   if (lineSignatureError) {
     httpLogger.warn('request failed because LINE webhook signature verification failed', {
       ...getRequestContext(req),
       statusCode: 401,
-      errorCode: 'SIGNATURE_VERIFICATION_FAILED',
+      errorCode: 'INVALID_LINE_SIGNATURE',
     });
 
     res.status(401).json({
-      code: 'SIGNATURE_VERIFICATION_FAILED',
+      code: 'INVALID_LINE_SIGNATURE',
       message: 'Invalid LINE webhook signature.',
       data: null,
     });
@@ -60,12 +61,13 @@ export const errorHandler = (error: unknown, req: Request, res: Response, _next:
   }
 
   const malformedJsonError =
-    error instanceof SyntaxError &&
-    typeof error === 'object' &&
-    error !== null &&
-    'status' in error &&
-    (error as { status?: number }).status === 400 &&
-    'body' in error;
+    (error instanceof SyntaxError &&
+      typeof error === 'object' &&
+      error !== null &&
+      'status' in error &&
+      (error as { status?: number }).status === 400 &&
+      'body' in error) ||
+    (error instanceof Error && error.name === 'JSONParseError');
 
   if (malformedJsonError) {
     httpLogger.warn('request failed because JSON body is malformed', {

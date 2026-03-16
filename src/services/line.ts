@@ -1,19 +1,28 @@
-import { Client, HTTPError, type Message, type ClientConfig } from '@line/bot-sdk';
+import {
+  Client,
+  HTTPError,
+  type Message,
+  type ClientConfig,
+  type TextMessage,
+} from '@line/bot-sdk';
 import type { AxiosError } from 'axios';
 
 import { createAppLogger } from '../utils/app-logger';
-import { maskToken } from '../utils/logger';
+import { maskToken, maskUserId } from '../utils/logger';
 
-interface ReplyMessageContext {
+export interface LineMessageContext {
   webhookEventId?: string;
   replyToken?: string;
   userId?: string;
+  to?: string;
+  targetCount?: number;
   isRedelivery?: boolean;
 }
 
 const lineLogger = createAppLogger('line');
 const LINE_REQUEST_ID_HEADER = 'x-line-request-id';
 const DEFAULT_REPLY_TEXT = '抱歉，我现在暂时无法回答，请稍后再试。';
+type LineSendOperation = 'replyMessage' | 'pushMessage' | 'multicast';
 
 const isTextMessage = (
   message: Message,
@@ -21,7 +30,22 @@ const isTextMessage = (
   return message.type === 'text';
 };
 
-const normalizeReplyMessages = (messages: Message | Message[]): Message[] => {
+const normalizeTextMessage = (text: string): string => {
+  const normalizedText = text.trim();
+
+  return normalizedText.length > 0
+    ? normalizedText.slice(0, 5000)
+    : DEFAULT_REPLY_TEXT;
+};
+
+export const buildTextMessage = (text: string): TextMessage => {
+  return {
+    type: 'text',
+    text: normalizeTextMessage(text),
+  };
+};
+
+const normalizeMessages = (messages: Message | Message[]): Message[] => {
   const messageList = Array.isArray(messages) ? messages : [messages];
 
   return messageList.map((message) => {
@@ -29,14 +53,9 @@ const normalizeReplyMessages = (messages: Message | Message[]): Message[] => {
       return message;
     }
 
-    const normalizedText = message.text.trim();
-    const text = normalizedText.length > 0
-      ? normalizedText.slice(0, 5000)
-      : DEFAULT_REPLY_TEXT;
-
     return {
       ...message,
-      text,
+      text: normalizeTextMessage(message.text),
     };
   });
 };
@@ -64,6 +83,15 @@ const getAxiosErrorDetails = (
   };
 };
 
+const getLineRequestId = (response: unknown): string | undefined => {
+  if (!response || typeof response !== 'object') {
+    return undefined;
+  }
+
+  const requestId = (response as Record<string, unknown>)[LINE_REQUEST_ID_HEADER];
+  return typeof requestId === 'string' ? requestId : undefined;
+};
+
 const createLineClient = (): Client => {
   const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
@@ -85,29 +113,26 @@ export class LineService {
     this.client = client;
   }
 
-  async replyMessage(
-    replyToken: string,
+  private async sendMessages(
+    operation: LineSendOperation,
     messages: Message | Message[],
-    context: ReplyMessageContext = {},
+    context: LineMessageContext,
+    send: (normalizedMessages: Message[]) => Promise<unknown>,
   ): Promise<void> {
-    const normalizedMessages = normalizeReplyMessages(messages);
+    const normalizedMessages = normalizeMessages(messages);
 
     try {
-      const response = await this.client.replyMessage(
-        replyToken,
-        normalizedMessages,
-      );
+      const response = await send(normalizedMessages);
 
-      lineLogger.info('line replyMessage succeeded', {
+      lineLogger.info(`line ${operation} succeeded`, {
         webhookEventId: context.webhookEventId,
-        replyToken: maskToken(context.replyToken ?? replyToken),
-        userId: context.userId,
+        replyToken: context.replyToken ? maskToken(context.replyToken) : undefined,
+        userId: context.userId ? maskUserId(context.userId) : undefined,
+        targetUserId: context.to ? maskUserId(context.to) : undefined,
+        targetCount: context.targetCount,
         isRedelivery: context.isRedelivery,
         lineStatus: 200,
-        lineRequestId:
-          typeof response[LINE_REQUEST_ID_HEADER] === 'string'
-            ? response[LINE_REQUEST_ID_HEADER]
-            : undefined,
+        lineRequestId: getLineRequestId(response),
         lineResponseBody: JSON.stringify(response),
         messageCount: normalizedMessages.length,
       });
@@ -115,11 +140,13 @@ export class LineService {
       const errorDetails = getAxiosErrorDetails(error);
 
       lineLogger.error(
-        'line replyMessage failed',
+        `line ${operation} failed`,
         {
           webhookEventId: context.webhookEventId,
-          replyToken: maskToken(context.replyToken ?? replyToken),
-          userId: context.userId,
+          replyToken: context.replyToken ? maskToken(context.replyToken) : undefined,
+          userId: context.userId ? maskUserId(context.userId) : undefined,
+          targetUserId: context.to ? maskUserId(context.to) : undefined,
+          targetCount: context.targetCount,
           isRedelivery: context.isRedelivery,
           lineStatus: errorDetails.statusCode,
           lineRequestId: errorDetails.lineRequestId,
@@ -133,12 +160,48 @@ export class LineService {
     }
   }
 
-  async pushMessage(to: string, messages: Message | Message[]): Promise<void> {
-    await this.client.pushMessage(to, messages);
+  async replyMessage(
+    replyToken: string,
+    messages: Message | Message[],
+    context: LineMessageContext = {},
+  ): Promise<void> {
+    await this.sendMessages(
+      'replyMessage',
+      messages,
+      {
+        ...context,
+        replyToken,
+      },
+      async (normalizedMessages) => this.client.replyMessage(replyToken, normalizedMessages),
+    );
   }
 
-  async multicast(to: string[], messages: Message | Message[]): Promise<void> {
-    await this.client.multicast(to, messages);
+  async pushMessage(to: string, messages: Message | Message[]): Promise<void> {
+    await this.sendMessages(
+      'pushMessage',
+      messages,
+      {
+        to,
+        targetCount: 1,
+      },
+      async (normalizedMessages) => this.client.pushMessage(to, normalizedMessages),
+    );
+  }
+
+  async multicast(
+    to: string[],
+    messages: Message | Message[],
+    context: LineMessageContext = {},
+  ): Promise<void> {
+    await this.sendMessages(
+      'multicast',
+      messages,
+      {
+        ...context,
+        targetCount: to.length,
+      },
+      async (normalizedMessages) => this.client.multicast(to, normalizedMessages),
+    );
   }
 }
 
