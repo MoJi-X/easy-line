@@ -188,7 +188,12 @@ const verify = async (): Promise<void> => {
     'isolated user context',
   );
   assert.equal(service.getUserContext('user-1').length, 6);
-  assert.deepEqual(service.getRegisteredToolNames(), ['search.tavily']);
+  assert.deepEqual(service.getRegisteredToolNames(), [
+    'search.tavily',
+    'create_alarm_session',
+    'list_alarms',
+    'analyze_alarm',
+  ]);
 
   console.info('AgentService verification passed.');
 };

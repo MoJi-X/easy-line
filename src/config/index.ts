@@ -9,6 +9,8 @@ type RequiredConfigKey =
 const DEFAULT_LLM_MODEL = "gpt-3.5-turbo";
 
 export interface AppConfig {
+  alarmAgentBaseUrl?: string;
+  alarmAgentTimeoutMs: number;
   lineChannelSecret: string;
   lineChannelAccessToken: string;
   llmApiKey?: string;
@@ -120,6 +122,8 @@ if (missingKeys.length > 0) {
 }
 
 export const config: AppConfig = {
+  alarmAgentBaseUrl: parseOptionalUrl("ALARM_AGENT_BASE_URL"),
+  alarmAgentTimeoutMs: parsePositiveIntegerEnv("ALARM_AGENT_TIMEOUT_MS", 10000),
   lineChannelSecret: process.env.LINE_CHANNEL_SECRET as string,
   lineChannelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN as string,
   llmApiKey: getOptionalEnv("LLM_API_KEY"),

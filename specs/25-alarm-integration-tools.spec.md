@@ -59,11 +59,21 @@
 - 集成验证：在配置可用时，`create_alarm_session -> list_alarms -> analyze_alarm` 能连通真实后端。
 - 演示验收：用户查询未处理告警后，Agent 能返回编号化列表，并对指定告警输出结构化分析结论。
 
+## 本轮实现记录
+- scope: 本轮实现 `ALARM-001`、`ALARM-002`、`ALARM-003`，新增告警域配置、`AlarmAgentClient`、`create_alarm_session`/`list_alarms`/`analyze_alarm` Tool，并接入统一 Tool Registry。
+- decision: 告警后端配置保持可选；即使未配置 `ALARM_AGENT_BASE_URL`，应用仍可启动，但告警 Tool 会返回结构化失败对象，不会伪造成功结果。
+- decision: SSE 在 Client 层只负责读取并解析事件，不拼装最终分析结论；`analysis_markdown`、`should_offer_dispatch` 和 `partial_analysis` 统一在 Tool 层生成，避免把原始 SSE 文本直接暴露给 Agent。
+- decision: `list_alarms` 在结构化 `alarms` 数组之外补充 `alarm_summary_markdown`，用于给 Agent 提供稳定、编号化的可读列表，同时保留 `raw` 备用。
+- deferred: `ALARM-004`、告警状态机、人机确认节点、工单创建与 Dify 联调继续延期到 `specs/26-alarm-agent-workflow.spec.md` 和 `specs/27-workorder-dispatch.spec.md`，本轮不实现。
+- validation: 新增 `src/scripts/verify-alarm-tools.ts`，通过本地 mock HTTP/SSE 服务验证 `create_alarm_session -> list_alarms -> analyze_alarm` 主链路，以及 SSE 中断时的 `partial_analysis` 降级结果。
+
 ## 风险与回退
 - 风险：SSE 事件格式不稳定时，分析结论提取会受到影响。
 - 风险：告警对象字段可能存在多套命名，例如 `device_sn` / `deviceSn` / `externalId`，需要在归一层处理。
 - 回退：若 SSE 聚合阻塞，先保留 `list_alarms` 和 mock `analyze_alarm` 输出，验证 Tool Registry 与后续状态机接口。
 
 ## 当前实现基线
-- 当前仓库尚未落地外部域 HTTP Client，也没有告警 Tool。
-- 下一步应先完成 ALARM-001 到 ALARM-003，确保告警查询与分析结果可被 Agent 稳定消费。
+- 已新增 `src/clients/alarm-agent-client.ts`，统一承接告警域 HTTP 请求、超时控制、SSE 事件读取与结构化错误映射。
+- 已新增 `src/tools/alarm-tools.ts`，落地 `create_alarm_session`、`list_alarms`、`analyze_alarm` 三个 Tool，并将其接入统一 Tool Registry。
+- `analyze_alarm` 已把流式 SSE 聚合为 `analysis_markdown`、`raw_events`、`should_offer_dispatch`，流式中断时返回 `partial_analysis`。
+- 下一步进入 `specs/26-alarm-agent-workflow.spec.md`，补齐按 `userId` 管理的告警工作流状态、告警选择逻辑与人机确认节点。

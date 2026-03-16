@@ -1,12 +1,17 @@
 import { config } from '../config';
 
 import {
+  createAlarmTools,
+  type AlarmTool,
+  type AlarmToolsOptions,
+} from './alarm-tools';
+import {
   createTavilySearchTool,
   type TavilySearchTool,
   type TavilySearchToolOptions,
 } from './tavily-search';
 
-export type AgentTool = TavilySearchTool;
+export type AgentTool = TavilySearchTool | AlarmTool;
 
 export interface RegisteredTool {
   description: string;
@@ -14,6 +19,7 @@ export interface RegisteredTool {
 }
 
 export interface ToolRegistryOptions {
+  alarmTools?: AlarmToolsOptions;
   tavilySearch?: TavilySearchToolOptions;
 }
 
@@ -55,6 +61,10 @@ export const createToolRegistry = (
       ...options.tavilySearch,
     }),
   );
+
+  createAlarmTools(options.alarmTools).forEach((tool) => {
+    registry.register(tool);
+  });
 
   return registry;
 };
