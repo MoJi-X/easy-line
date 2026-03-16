@@ -10,8 +10,13 @@ import {
   type TavilySearchTool,
   type TavilySearchToolOptions,
 } from './tavily-search';
+import {
+  createWorkOrderTools,
+  type WorkOrderTool,
+  type WorkOrderToolsOptions,
+} from './workorder-tools';
 
-export type AgentTool = TavilySearchTool | AlarmTool;
+export type AgentTool = TavilySearchTool | AlarmTool | WorkOrderTool;
 
 export interface RegisteredTool {
   description: string;
@@ -21,6 +26,7 @@ export interface RegisteredTool {
 export interface ToolRegistryOptions {
   alarmTools?: AlarmToolsOptions;
   tavilySearch?: TavilySearchToolOptions;
+  workorderTools?: WorkOrderToolsOptions;
 }
 
 export class ToolRegistry<TTool extends RegisteredTool = RegisteredTool> {
@@ -63,6 +69,10 @@ export const createToolRegistry = (
   );
 
   createAlarmTools(options.alarmTools).forEach((tool) => {
+    registry.register(tool);
+  });
+
+  createWorkOrderTools(options.workorderTools).forEach((tool) => {
     registry.register(tool);
   });
 

@@ -197,6 +197,7 @@ const verify = async (): Promise<void> => {
       'create_alarm_session',
       'list_alarms',
       'analyze_alarm',
+      'create_work_order',
     ]);
 
     const createAlarmSessionTool = findTool(tools, 'create_alarm_session');

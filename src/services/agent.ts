@@ -17,6 +17,10 @@ import {
   type NormalizedAlarmRecord,
 } from '../tools/alarm-tools';
 import {
+  type CreateWorkOrderSuccess,
+  type WorkOrderToolFailure,
+} from '../tools/workorder-tools';
+import {
   createToolRegistry,
   type AgentTool,
   type ToolRegistry,
@@ -38,11 +42,14 @@ const CONFIRMATION_PENDING_REPLY =
   '当前正在等待你确认是否建单。请回复“确认建单”或“先不建单”。';
 const WORKORDER_CONTEXT_MISSING_REPLY =
   '当前未配置全局建单上下文，暂时只能完成告警分析';
-const WORKORDER_NOT_IMPLEMENTED_REPLY =
-  '已收到建单确认，当前环境已配置全局建单上下文，但 create_work_order 还未在本轮实现，暂未真正创建工单。';
+const WORKORDER_CONTEXT_INVALID_REPLY =
+  '当前建单上下文不完整，请先重新分析目标告警，再确认是否建单。';
+const WORKORDER_WORKFLOW_NOT_CONFIGURED_REPLY =
+  '当前未配置工单工作流地址，暂时无法创建工单。';
 const CREATE_ALARM_SESSION_TOOL_NAME = 'create_alarm_session';
 const LIST_ALARMS_TOOL_NAME = 'list_alarms';
 const ANALYZE_ALARM_TOOL_NAME = 'analyze_alarm';
+const CREATE_WORK_ORDER_TOOL_NAME = 'create_work_order';
 const agentLogger = createAppLogger('agent');
 
 const AGENT_SYSTEM_PROMPT = [
@@ -52,7 +59,7 @@ const AGENT_SYSTEM_PROMPT = [
   '如果 `search.tavily` 返回搜索不可用、超时或未配置，请直接告诉用户当前无法获取最新外部信息，不要编造答案。',
   '告警链路已经由系统状态机接管：查看告警、分析第 N 条告警、确认或取消建单会由系统显式编排。',
   '如果用户想直接建单，但还没有完成告警分析和确认节点，请明确提示需要先查看并分析具体告警。',
-  '即使用户已经确认建单，也不能伪造工单成功结果；当前尚未接入真实 `create_work_order`。',
+  '工单创建会在确认节点通过后由系统显式调用 `create_work_order`，不要在未确认时自行调用，也不要伪造工单结果。',
   '当前尚未接入任务 CRUD、天气调度和 JSON 持久化，不要假装已经创建、修改、删除或执行任何任务。',
   '对于不需要实时外部信息的稳定问题，可以直接回答。',
 ].join('\n');
@@ -133,7 +140,8 @@ type AgentTools = AgentTool[];
 type AgentToolName =
   | typeof CREATE_ALARM_SESSION_TOOL_NAME
   | typeof LIST_ALARMS_TOOL_NAME
-  | typeof ANALYZE_ALARM_TOOL_NAME;
+  | typeof ANALYZE_ALARM_TOOL_NAME
+  | typeof CREATE_WORK_ORDER_TOOL_NAME;
 type WorkOrderContextKey = (typeof WORKORDER_CONTEXT_KEYS)[number];
 type PendingConfirmationAction = 'create_work_order';
 type PendingConfirmationResolution = 'cancel' | 'confirm' | null;
@@ -539,6 +547,17 @@ const isAlarmToolFailure = (value: unknown): value is AlarmToolFailure => {
   );
 };
 
+const isWorkOrderToolFailure = (
+  value: unknown,
+): value is WorkOrderToolFailure => {
+  return (
+    isRecord(value) &&
+    value.success === false &&
+    typeof value.message === 'string' &&
+    typeof value.error_type === 'string'
+  );
+};
+
 const isCreateAlarmSessionSuccess = (
   value: unknown,
 ): value is CreateAlarmSessionSuccess => {
@@ -565,6 +584,17 @@ const isAnalyzeAlarmSuccess = (value: unknown): value is AnalyzeAlarmSuccess => 
     typeof value.analysis_markdown === 'string' &&
     typeof value.session_id === 'string' &&
     Array.isArray(value.raw_events)
+  );
+};
+
+const isCreateWorkOrderSuccess = (
+  value: unknown,
+): value is CreateWorkOrderSuccess => {
+  return (
+    isRecord(value) &&
+    value.success === true &&
+    typeof value.workflow_run_id === 'string' &&
+    typeof value.mock === 'boolean'
   );
 };
 
@@ -635,6 +665,49 @@ export const getWorkOrderGlobalContextAvailability = (
     available: missingKeys.length === 0,
     missingKeys,
   };
+};
+
+const formatWorkOrderField = (value: string | null | undefined): string => {
+  if (!value) {
+    return '未知';
+  }
+
+  return value;
+};
+
+const buildWorkOrderFailureReply = (
+  failure: WorkOrderToolFailure,
+): string => {
+  if (failure.error_type === 'missing_business_context') {
+    return WORKORDER_CONTEXT_MISSING_REPLY;
+  }
+
+  if (failure.error_type === 'workflow_not_configured') {
+    return WORKORDER_WORKFLOW_NOT_CONFIGURED_REPLY;
+  }
+
+  return `当前无法创建工单：${failure.message}`;
+};
+
+const buildWorkOrderSuccessReply = (
+  result: CreateWorkOrderSuccess,
+): string => {
+  const header = result.mock
+    ? '已生成 mock 工单结果（非真实业务建单）。'
+    : '已为这条告警创建工单。';
+
+  return [
+    header,
+    `工单编号: ${formatWorkOrderField(result.work_order_no)}`,
+    `工单ID: ${formatWorkOrderField(result.work_order_id)}`,
+    `标题: ${formatWorkOrderField(result.title)}`,
+    `等级: ${formatWorkOrderField(result.level)}`,
+    `状态: ${formatWorkOrderField(result.status)}`,
+    `负责人: ${formatWorkOrderField(result.assignee)}`,
+    `接单人: ${formatWorkOrderField(result.acceptor)}`,
+    `开始时间: ${formatWorkOrderField(result.start_time)}`,
+    `结束时间: ${formatWorkOrderField(result.end_time)}`,
+  ].join('\n');
 };
 
 export class AgentConversationMemory {
@@ -987,7 +1060,9 @@ export class AgentService {
     };
   }
 
-  private handleConfirmationApprove(userId: string): ProcessUserMessageResult {
+  private async handleConfirmationApprove(
+    userId: string,
+  ): Promise<ProcessUserMessageResult> {
     const availability = getWorkOrderGlobalContextAvailability(
       getWorkOrderGlobalContext(),
     );
@@ -998,7 +1073,7 @@ export class AgentService {
         pendingConfirmation: undefined,
         lastWorkOrderResult: {
           success: false,
-          reason: 'missing_business_context',
+          error_type: 'missing_business_context',
           message: WORKORDER_CONTEXT_MISSING_REPLY,
         },
       }));
@@ -1009,19 +1084,63 @@ export class AgentService {
       };
     }
 
+    const workflow = this.memoryStore.getAlarmWorkflow(userId);
+
+    if (!workflow.selectedAlarm || !workflow.lastAnalysisMarkdown) {
+      this.memoryStore.updateAlarmWorkflow(userId, (currentWorkflow) => ({
+        ...currentWorkflow,
+        pendingConfirmation: undefined,
+        lastWorkOrderResult: {
+          success: false,
+          error_type: 'invalid_workflow_state',
+          message: WORKORDER_CONTEXT_INVALID_REPLY,
+        },
+      }));
+
+      return {
+        reply: WORKORDER_CONTEXT_INVALID_REPLY,
+        usedTools: [],
+      };
+    }
+
+    const toolResult = await this.invokeAlarmTool(CREATE_WORK_ORDER_TOOL_NAME, {
+      alarm: { ...workflow.selectedAlarm.raw },
+      analysis_markdown: workflow.lastAnalysisMarkdown,
+    });
+
+    if (isWorkOrderToolFailure(toolResult)) {
+      this.memoryStore.updateAlarmWorkflow(userId, (currentWorkflow) => ({
+        ...currentWorkflow,
+        pendingConfirmation: undefined,
+        lastWorkOrderResult: {
+          ...toolResult,
+        },
+      }));
+
+      return {
+        reply: buildWorkOrderFailureReply(toolResult),
+        usedTools: [CREATE_WORK_ORDER_TOOL_NAME],
+      };
+    }
+
+    if (!isCreateWorkOrderSuccess(toolResult)) {
+      throw new AgentServiceError(
+        'AGENT_INVOCATION_FAILED',
+        'create_work_order returned an invalid response.',
+      );
+    }
+
     this.memoryStore.updateAlarmWorkflow(userId, (workflow) => ({
       ...workflow,
       pendingConfirmation: undefined,
       lastWorkOrderResult: {
-        success: false,
-        reason: 'not_implemented',
-        message: WORKORDER_NOT_IMPLEMENTED_REPLY,
+        ...toolResult,
       },
     }));
 
     return {
-      reply: WORKORDER_NOT_IMPLEMENTED_REPLY,
-      usedTools: [],
+      reply: buildWorkOrderSuccessReply(toolResult),
+      usedTools: [CREATE_WORK_ORDER_TOOL_NAME],
     };
   }
 

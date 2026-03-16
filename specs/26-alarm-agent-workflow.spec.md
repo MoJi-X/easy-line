@@ -69,11 +69,11 @@
 - decision: 告警状态机收敛到 `src/services/agent.ts` 的显式编排层，优先拦截“查看告警”“分析第 N 条告警”“确认/取消建单”，其他消息继续走现有 LangChain Agent。
 - decision: 会话状态按 `userId` 统一归档为 `messages + alarmWorkflow`，其中仅保存 `alarmSessionId`、`alarmList`、`selectedAlarm`、`lastAnalysisMarkdown`、`pendingConfirmation`、`lastWorkOrderResult`，不落 `tenant_id`、`pmms_authorization`、`user`。
 - decision: 用户确认建单时只检查 `config.workorderTenantId`、`config.workorderPmmsAuthorization`、`config.workorderUser`；若任一缺失，固定回复“当前未配置全局建单上下文，暂时只能完成告警分析”，且不伪造建单成功。
-- deferred: 真实 `create_work_order` Tool、Dify Workflow Client、字段映射与结果回写继续延期到 `specs/27-workorder-dispatch.spec.md`，本轮只完成确认节点与可用性检查，不落真实建单。
+- deferred: 真实 `create_work_order` Tool、Dify Workflow Client、字段映射与结果回写已在 `specs/27-workorder-dispatch.spec.md` 落地；本 spec 继续只负责确认节点与全局建单配置检查，不重复下沉建单实现。
 - validation: 新增 `src/scripts/verify-alarm-agent-workflow.ts`，通过本地 mock 告警 HTTP/SSE 服务验证 `/chat` 与 Webhook 共用的 `list_alarms -> analyze_alarm -> wait_user_confirmation` 主链路，以及跨用户隔离和缺失全局建单配置时的稳定提示。
 
 ## 当前实现基线
 - 统一 Agent 已升级为用户级会话容器，消息历史仍只保留最近 3 轮，同时按 `userId` 挂载 `alarmWorkflow` 业务状态。
 - “查看当前未处理告警”“分析第 N 条告警”“先不建单”“确认建单”已由 `AgentService` 显式编排，`/chat` 与 LINE Webhook 继续复用同一条消息处理链路。
 - 告警分析完成后会进入 `pendingConfirmation=create_work_order` 的确认节点；取消或确认后都会清理状态，避免重复触发建单动作。
-- 真实建单仍未接入；即使全局建单配置已存在，当前也只会明确提示“create_work_order 尚未实现”，不会返回伪造的工单结果。
+- 下游 `specs/27-workorder-dispatch.spec.md` 已完成真实 `create_work_order` 接入；当全局建单配置存在且用户确认后，会继续进入建单 Tool 并回写结构化结果。

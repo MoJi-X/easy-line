@@ -27,7 +27,7 @@
 - inputs：07 文档 3.1、4.1 Tool 4、10.2、11；改造方案文档 5。
 - outputs：`src/clients/workorder-client.ts`、工单相关配置解析、外部调用日志。
 - dependencies：`specs/10-line-message.spec.md` 的 LINE-001。
-- implementation notes：至少支持阻塞式 `runWorkflow()`；`src/config/index.ts` 负责解析 `WORKORDER_TENANT_ID`、`WORKORDER_PMMS_AUTHORIZATION`、`WORKORDER_USER`、`WORKORDER_WORKFLOW_URL`、`WORKORDER_WORKFLOW_API_KEY`、`WORKORDER_WORKFLOW_TIMEOUT_MS`；外部调用必须设置超时；日志只保留状态码、请求 ID、字段摘要，不输出完整 token。
+- implementation notes：至少支持阻塞式 `runWorkflow()`；`src/config/index.ts` 负责解析 `WORKORDER_TENANT_ID`、`WORKORDER_PMMS_AUTHORIZATION`、`WORKORDER_USER`、`WORKORDER_WORKFLOW_URL`、`WORKORDER_WORKFLOW_API_KEY`、`WORKORDER_WORKFLOW_TIMEOUT_MS`、`MOCK_CREATE_WORK_ORDER`；外部调用必须设置超时；日志只保留状态码、请求 ID、字段摘要，不输出完整 token；Dify 请求体中的 `user` 固定取 `config.workorderUser`。
 - acceptance criteria：真实建单调用可由单一 Client 发起；网络异常、超时和 Dify 非 2xx 响应可被统一包装。
 
 ### WORKORDER-002 告警到工单的字段映射与 `fault_desc` 清洗
@@ -43,7 +43,7 @@
 - inputs：07 文档 7.4、8.1、10.2、11、13、14；改造方案文档 4.3、5、8。
 - outputs：`create_work_order` Tool、`missing_business_context` 等错误类型、`MOCK_CREATE_WORK_ORDER` 开关语义。
 - dependencies：WORKORDER-001、WORKORDER-002、`specs/26-alarm-agent-workflow.spec.md` 的 ALARM-WF-003、ALARM-WF-004。
-- implementation notes：建单前必须同时校验 `pendingConfirmation === create_work_order`、`config.workorderTenantId` 已存在、`config.workorderPmmsAuthorization` 已存在、`config.workorderUser` 已存在；`create_work_order` 只从全局配置读取这 3 个字段，不接受 Tool 入参覆盖，也不从 LINE `userId` 推导；缺配置时沿用 `missing_business_context` 错误语义，并固定提示“缺少全局建单配置”；mock 模式返回的数据结构必须显式标记 `mock: true`，避免被误认为真实业务建单；如果 Dify 返回异常，需要保留状态码、原始响应摘要和解析失败信息。
+- implementation notes：建单前必须同时校验 `pendingConfirmation === create_work_order`、`config.workorderTenantId` 已存在、`config.workorderPmmsAuthorization` 已存在、`config.workorderUser` 已存在；`create_work_order` 只从全局配置读取这 3 个字段，不接受 Tool 入参覆盖，也不从 LINE `userId` 推导；缺配置时沿用 `missing_business_context` 错误语义，并固定提示“缺少全局建单配置”；mock 模式返回的数据结构必须显式标记 `mock: true`，避免被误认为真实业务建单；live 模式调用 Dify 时，`tenant_id`、`pmms_authorization`、`user` 全部来自全局配置；如果 Dify 返回异常，需要保留状态码、原始响应摘要和解析失败信息。
 - acceptance criteria：未确认或缺少全局建单配置时一定阻断建单；mock/live 返回结构保持兼容；Dify 请求中的 `tenant_id`、`pmms_authorization`、`user` 全部来自全局配置；错误信息足以定位失败原因。
 
 ### WORKORDER-004 建单结果回写与用户可读回复
@@ -65,5 +65,19 @@
 - 回退：若 live 建单迟迟不可用，先保留真实告警分析 + 显式 mock 建单，确保整条对话链路可演示。
 
 ## 当前实现基线
-- 当前仓库尚未接入任何建单能力，且全局建单配置也尚未落地到 `src/config/index.ts`。
-- 下一步应先冻结建单 Client 契约和 `fault_desc` 生成规则，再补 mock/live 切换和结果回写。
+- 当前仓库已接入 `src/clients/workorder-client.ts`、`src/tools/workorder-tools.ts`、全局建单配置解析、mock/live 切换和结果归一。
+- `AgentService` 已在确认节点通过后调用 `create_work_order`，并把成功/失败结果写回 `lastWorkOrderResult`。
+- 验证脚本已覆盖缺配置阻断、mock 分支和本地 Dify stub 的 live 分支。
+
+## 本轮实现口径
+- 仅实现 `specs/27-workorder-dispatch.spec.md` 的工单配置、Client、Tool、mock/live 切换、结果回写和验证，不混入任务 CRUD、天气调度等其他模块。
+- `tenant_id`、`pmms_authorization`、Dify `user` 统一只从全局配置读取；`create_work_order` 不接收这些字段的 Tool 入参覆盖，也不从 LINE `userId` 推导。
+- 应用启动阶段允许缺少 `WORKORDER_TENANT_ID`、`WORKORDER_PMMS_AUTHORIZATION`、`WORKORDER_USER`，但 `create_work_order` 必须稳定返回 `missing_business_context`，且不能影响告警查询与分析链路。
+
+## 本轮实现记录
+- scope: 本轮完成 `WORKORDER-001`、`WORKORDER-002`、`WORKORDER-003`、`WORKORDER-004`，落地全局建单配置、Dify Workflow Client、字段映射、`fault_desc` 清洗、mock/live 分支、Agent 结果回写与验证脚本。
+- decision: `create_work_order` Tool 的输入只保留 `alarm` 和 `analysis_markdown`；`tenant_id`、`pmms_authorization`、`user` 统一从 `config` 读取，Dify 请求体中的 `user` 固定取 `config.workorderUser`。
+- decision: `fault_desc` 通过“告警上下文 + 清洗后的分析摘要 + 补充建议”生成，并强制截断在 100 到 400 字，避免把长 Markdown 原样透传到工作流。
+- decision: 缺少 `WORKORDER_TENANT_ID`、`WORKORDER_PMMS_AUTHORIZATION`、`WORKORDER_USER` 时，应用仍允许启动；Tool 直接返回 `missing_business_context`，Agent 侧保持固定用户提示“当前未配置全局建单上下文，暂时只能完成告警分析”。
+- deferred: Dify 真实联调字段稳定性、正式环境下的 `pmms_authorization` 格式约束和更细的业务错误码继续保留为后续联调项，本轮仅保证 Demo 必需级别的错误映射与验证闭环。
+- validation: 新增 `src/scripts/verify-workorder-dispatch.ts`，覆盖 `create_work_order` 缺配置阻断、mock 成功返回、live 请求体字段映射、`fault_desc` 长度约束以及 Agent 确认后建单成功回写。

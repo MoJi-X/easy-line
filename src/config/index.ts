@@ -16,6 +16,7 @@ export interface AppConfig {
   llmApiKey?: string;
   llmBaseUrl?: string;
   llmModel: string;
+  mockCreateWorkOrder: boolean;
   port: number;
   tavilyApiBaseUrl?: string;
   tavilyApiKey?: string;
@@ -23,6 +24,9 @@ export interface AppConfig {
   workorderPmmsAuthorization?: string;
   workorderTenantId?: string;
   workorderUser?: string;
+  workorderWorkflowApiKey?: string;
+  workorderWorkflowTimeoutMs: number;
+  workorderWorkflowUrl?: string;
 }
 
 const REQUIRED_KEYS: RequiredConfigKey[] = [
@@ -116,6 +120,28 @@ const parsePositiveIntegerEnv = (
   return parsedValue;
 };
 
+const parseBooleanEnv = (key: string, defaultValue: boolean): boolean => {
+  const rawValue = getOptionalEnv(key);
+
+  if (!rawValue) {
+    return defaultValue;
+  }
+
+  const normalizedValue = rawValue.toLowerCase();
+
+  if (["1", "true", "yes", "on"].includes(normalizedValue)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalizedValue)) {
+    return false;
+  }
+
+  throw new Error(
+    `Invalid ${key}. Please provide a boolean value like true/false.`,
+  );
+};
+
 const missingKeys = getMissingKeys();
 
 if (missingKeys.length > 0) {
@@ -132,6 +158,7 @@ export const config: AppConfig = {
   llmApiKey: getOptionalEnv("LLM_API_KEY"),
   llmBaseUrl: parseLlmBaseUrl(),
   llmModel: getOptionalEnv("LLM_MODEL") ?? DEFAULT_LLM_MODEL,
+  mockCreateWorkOrder: parseBooleanEnv("MOCK_CREATE_WORK_ORDER", false),
   port: parsePort(),
   tavilyApiBaseUrl: parseOptionalUrl("TAVILY_API_BASE_URL"),
   tavilyApiKey: getOptionalEnv("TAVILY_API_KEY"),
@@ -139,4 +166,10 @@ export const config: AppConfig = {
   workorderPmmsAuthorization: getOptionalEnv("WORKORDER_PMMS_AUTHORIZATION"),
   workorderTenantId: getOptionalEnv("WORKORDER_TENANT_ID"),
   workorderUser: getOptionalEnv("WORKORDER_USER"),
+  workorderWorkflowApiKey: getOptionalEnv("WORKORDER_WORKFLOW_API_KEY"),
+  workorderWorkflowTimeoutMs: parsePositiveIntegerEnv(
+    "WORKORDER_WORKFLOW_TIMEOUT_MS",
+    10000,
+  ),
+  workorderWorkflowUrl: parseOptionalUrl("WORKORDER_WORKFLOW_URL"),
 };
