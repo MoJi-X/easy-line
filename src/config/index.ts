@@ -148,18 +148,8 @@ const parseBooleanEnv = (key: string, defaultValue: boolean): boolean => {
 
 const parseFlexMessageBuilder = (): FlexMessageBuilderType => {
   const rawValue = getOptionalEnv("FLEX_MESSAGE_BUILDER");
-
-  if (!rawValue) {
-    return DEFAULT_FLEX_MESSAGE_BUILDER as FlexMessageBuilderType;
-  }
-
-  const normalizedValue = rawValue.toLowerCase().trim();
-
-  if (normalizedValue === "code" || normalizedValue === "llm") {
-    return normalizedValue;
-  }
-
-  return DEFAULT_FLEX_MESSAGE_BUILDER as FlexMessageBuilderType;
+  const normalizedValue = rawValue?.toLowerCase().trim() || DEFAULT_FLEX_MESSAGE_BUILDER;
+  return normalizedValue === "llm" ? "llm" : "code";
 };
 
 const missingKeys = getMissingKeys();

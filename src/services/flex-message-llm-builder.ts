@@ -148,21 +148,24 @@ export class FlexMessageLLMBuilder {
     if (options.model) {
       this.model = options.model;
     } else {
+      if (!config.llmApiKey) {
+        throw new Error(
+          "LLM API key is required for Flex Message LLM builder. Please set LLM_API_KEY environment variable.",
+        );
+      }
+
       const modelConfig: {
         modelName: string;
         temperature: number;
         timeout: number;
-        apiKey?: string;
+        apiKey: string;
         configuration?: { baseURL?: string };
       } = {
         modelName: config.llmModel,
         temperature: 0.1,
         timeout: this.timeoutMs,
+        apiKey: config.llmApiKey,
       };
-
-      if (config.llmApiKey) {
-        modelConfig.apiKey = config.llmApiKey;
-      }
 
       if (config.llmBaseUrl) {
         modelConfig.configuration = { baseURL: config.llmBaseUrl };

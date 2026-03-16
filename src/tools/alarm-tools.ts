@@ -9,6 +9,7 @@ import {
 } from "../clients/alarm-agent-client";
 import { config } from "../config";
 import {
+  buildAlarmAnalysisFlexMessage,
   buildAlarmAnalysisFlexMessageWithFallback,
   type FlexMessage,
 } from "../services/flex-message-builder";
@@ -1044,13 +1045,25 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
           normalizedInput.alarms[0] as Record<string, unknown>,
         );
 
-        const flexMessage = await buildAlarmAnalysisFlexMessageWithFallback(
-          alarmRecord,
-          analysisMarkdown,
-          recommendedActionHint,
-          shouldOfferDispatch,
-          undefined,
-        );
+        let flexMessage;
+        try {
+          flexMessage = await buildAlarmAnalysisFlexMessageWithFallback(
+            alarmRecord,
+            analysisMarkdown,
+            recommendedActionHint,
+            shouldOfferDispatch,
+            undefined,
+          );
+        } catch (flexError) {
+          alarmToolLogger.warn('Flex Message build failed, using fallback', {
+            error: flexError instanceof Error ? flexError.message : 'Unknown error',
+          });
+          flexMessage = buildAlarmAnalysisFlexMessage({
+            alarm: alarmRecord,
+            analysisMarkdown,
+            recommendedAction: recommendedActionHint === 'create_work_order' ? 'dispatch' : null,
+          });
+        }
 
         alarmToolLogger.debug('analyze_alarm output', {
           sessionId: normalizedInput.session_id,
