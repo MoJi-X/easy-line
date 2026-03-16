@@ -9,9 +9,9 @@
 | 文档 | 章节 | 用途 |
 | --- | --- | --- |
 | `docs/07_LangChain_Agent_告警分析到工单创建_集成开发指导.md` | 3.1、4.1 Tool 4、6、7.4、8、9、10.2、11、12.2、12.4、13、14 | 工单创建接口、字段映射、上下文校验、mock 建议与最小落地路径 |
-| `docs/08_告警分析与工单创建接入改造方案.md` | 4.3、4.4、5、6、7、8 | 业务上下文来源、摘要清洗和实施顺序 |
+| `docs/08_告警分析与工单创建接入改造方案.md` | 4.3、4.4、5、6、7、8 | 全局建单配置来源、摘要清洗和实施顺序 |
 | `docs/需求规格说明书.md` | 3.2、4.1、4.2、4.3、5.1 | Tool 扩展、超时、日志脱敏与外部服务边界 |
-| `specs/26-alarm-agent-workflow.spec.md` | ALARM-WF-003、ALARM-WF-004 | 建单前确认状态与业务上下文来源 |
+| `specs/26-alarm-agent-workflow.spec.md` | ALARM-WF-003、ALARM-WF-004 | 建单前确认状态与全局建单配置来源 |
 
 ## 模块依赖
 | 依赖项 | 类型 | 说明 |
@@ -27,7 +27,7 @@
 - inputs：07 文档 3.1、4.1 Tool 4、10.2、11；改造方案文档 5。
 - outputs：`src/clients/workorder-client.ts`、工单相关配置解析、外部调用日志。
 - dependencies：`specs/10-line-message.spec.md` 的 LINE-001。
-- implementation notes：至少支持阻塞式 `runWorkflow()`；`WORKORDER_WORKFLOW_URL` 必填，`WORKORDER_WORKFLOW_API_KEY` 视实际鉴权方式选配；外部调用必须设置超时；日志只保留状态码、请求 ID、字段摘要，不输出完整 token。
+- implementation notes：至少支持阻塞式 `runWorkflow()`；`src/config/index.ts` 负责解析 `WORKORDER_TENANT_ID`、`WORKORDER_PMMS_AUTHORIZATION`、`WORKORDER_USER`、`WORKORDER_WORKFLOW_URL`、`WORKORDER_WORKFLOW_API_KEY`、`WORKORDER_WORKFLOW_TIMEOUT_MS`；外部调用必须设置超时；日志只保留状态码、请求 ID、字段摘要，不输出完整 token。
 - acceptance criteria：真实建单调用可由单一 Client 发起；网络异常、超时和 Dify 非 2xx 响应可被统一包装。
 
 ### WORKORDER-002 告警到工单的字段映射与 `fault_desc` 清洗
@@ -38,13 +38,13 @@
 - implementation notes：优先映射 `device_type`、`device_sn`、`alarm_id`、`alarm_category`、`alarm_type`、`alarm_type_name`、`fault_code`、`site_name`；`fault_desc` 只保留告警对象、核心结论、建议动作和重要原因，长度控制在 100 到 400 字；缺省字段允许按 Demo 规则降级，例如 `device_type` 缺省为 `inverter`。
 - acceptance criteria：建单输入结构与 Dify 接口要求一致；超长 Markdown 不会原样透传到工作流。
 
-### WORKORDER-003 `create_work_order` Tool、上下文校验与 mock/live 切换
-- goal：在 Tool 层完成业务上下文校验，并支持 Dify 不可达时的 Demo 兜底。
+### WORKORDER-003 `create_work_order` Tool、配置校验与 mock/live 切换
+- goal：在 Tool 层完成全局建单配置校验，并支持 Dify 不可达时的 Demo 兜底。
 - inputs：07 文档 7.4、8.1、10.2、11、13、14；改造方案文档 4.3、5、8。
 - outputs：`create_work_order` Tool、`missing_business_context` 等错误类型、`MOCK_CREATE_WORK_ORDER` 开关语义。
 - dependencies：WORKORDER-001、WORKORDER-002、`specs/26-alarm-agent-workflow.spec.md` 的 ALARM-WF-003、ALARM-WF-004。
-- implementation notes：建单前必须同时校验 `pendingConfirmation === create_work_order`、`tenant_id` 已存在、`pmms_authorization` 已存在；mock 模式返回的数据结构必须显式标记 `mock: true`，避免被误认为真实业务建单；如果 Dify 返回异常，需要保留状态码、原始响应摘要和解析失败信息。
-- acceptance criteria：未确认或缺少业务上下文时一定阻断建单；mock/live 返回结构保持兼容；错误信息足以定位失败原因。
+- implementation notes：建单前必须同时校验 `pendingConfirmation === create_work_order`、`config.workorderTenantId` 已存在、`config.workorderPmmsAuthorization` 已存在、`config.workorderUser` 已存在；`create_work_order` 只从全局配置读取这 3 个字段，不接受 Tool 入参覆盖，也不从 LINE `userId` 推导；缺配置时沿用 `missing_business_context` 错误语义，并固定提示“缺少全局建单配置”；mock 模式返回的数据结构必须显式标记 `mock: true`，避免被误认为真实业务建单；如果 Dify 返回异常，需要保留状态码、原始响应摘要和解析失败信息。
+- acceptance criteria：未确认或缺少全局建单配置时一定阻断建单；mock/live 返回结构保持兼容；Dify 请求中的 `tenant_id`、`pmms_authorization`、`user` 全部来自全局配置；错误信息足以定位失败原因。
 
 ### WORKORDER-004 建单结果回写与用户可读回复
 - goal：把成功或失败的建单结果写回 Agent 会话，并生成适合用户阅读的结果摘要。
@@ -55,7 +55,7 @@
 - acceptance criteria：用户确认后能收到清晰的建单结果；建单完成后不会因为旧的确认状态重复触发第二次建单。
 
 ## 验收与测试
-- 单元验证：字段归一、`fault_desc` 长度控制、缺少业务上下文的阻断、mock/live 分支。
+- 单元验证：字段归一、`fault_desc` 长度控制、缺少全局建单配置的阻断、mock/live 分支。
 - 集成验证：在真实配置可用时，`analyze_alarm -> confirm -> create_work_order` 能闭环执行。
 - 演示验收：用户确认建单后，Agent 能返回工单编号、标题、等级、负责人和时间窗口；Dify 不可达时可切换到显式 mock 模式继续演示。
 
@@ -65,5 +65,5 @@
 - 回退：若 live 建单迟迟不可用，先保留真实告警分析 + 显式 mock 建单，确保整条对话链路可演示。
 
 ## 当前实现基线
-- 当前仓库尚未接入任何建单能力，也缺少业务上下文来源。
+- 当前仓库尚未接入任何建单能力，且全局建单配置也尚未落地到 `src/config/index.ts`。
 - 下一步应先冻结建单 Client 契约和 `fault_desc` 生成规则，再补 mock/live 切换和结果回写。

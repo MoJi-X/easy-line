@@ -25,7 +25,7 @@
 | `specs/10-line-message.spec.md` | 启动与 LINE 消息桥接 | 应用入口、配置加载、Webhook、LineService、消息桥接接口 | Agent 推理、任务 CRUD、天气调度 |
 | `specs/20-agent-orchestrator.spec.md` | Agent 编排与工具框架 | `createAgent()`、上下文记忆、Tool Registry、Tavily、`/chat` 一致性 | JSON 持久化、天气任务执行 |
 | `specs/25-alarm-integration-tools.spec.md` | 告警域 Tool 接入 | 告警 HTTP Client、SSE 聚合、会话/列表/分析/修正 Tool | Agent 确认状态机、Dify 建单 |
-| `specs/26-alarm-agent-workflow.spec.md` | 告警分析对话状态机 | 告警选择、业务上下文注入、人机确认节点、告警会话状态 | Dify 工作流调用与结果解析 |
+| `specs/26-alarm-agent-workflow.spec.md` | 告警分析对话状态机 | 告警选择、全局建单配置检查、人机确认节点、告警会话状态 | Dify 工作流调用与结果解析 |
 | `specs/27-workorder-dispatch.spec.md` | 工单创建与结果回写 | 建单 Client、字段映射、`fault_desc` 清洗、mock/live 切换 | 告警列表查询、天气任务调度 |
 | `specs/30-task-crud-persistence.spec.md` | 动态任务 CRUD 与持久化 | 任务模型、所有权校验、自然语言/命令任务工具、`src/config/tasks.json` 回写、任务管理接口 | 实际天气拉取与定时推送 |
 | `specs/35-weather-scheduler-lifecycle.spec.md` | 天气调度执行与生命周期 | 任务加载与刷新、天气 API 调用、消息渲染、Push、执行日志 | 用户意图解析、任务字段编辑 |
@@ -47,7 +47,7 @@
 1. 先完成可启动的 Express 服务、环境变量加载、`POST /webhook` 和 `LineService`。
 2. 再把消息主链路切到 Agent，统一 `/webhook` 与 `/chat` 的行为，并接入 Tavily 搜索。
 3. 在通用 Agent 稳定后，补告警域 Tool、SSE 分析聚合和告警会话能力。
-4. 再扩展告警对话状态机、确认节点和业务上下文注入，打通查告警到待确认的主链路。
+4. 再扩展告警对话状态机、确认节点和全局建单配置检查，打通查告警到待确认的主链路。
 5. 然后接入工单创建、`fault_desc` 清洗、mock/live 切换和结果回写。
 6. 接着实现任务模型、任务工具、自然语言与 `/task` 命令的 CRUD，以及 `src/config/tasks.json` 写回。
 7. 在任务持久化稳定后实现调度加载、刷新、天气 API 拉取和主动推送。

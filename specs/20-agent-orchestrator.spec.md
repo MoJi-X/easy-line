@@ -58,7 +58,7 @@
 - inputs：需求文档 3.1.1、5.2、8.1、8.2；API 文档 3.1。
 - outputs：`src/routes/chat.ts`、请求体验证、错误到响应结构的映射。
 - dependencies：AGT-001、AGT-002、AGT-003。
-- implementation notes：基础请求体固定为 `userId` 和 `message`；后续如需承载告警建单链路，可在不破坏现有兼容性的前提下增加可选 `context` 字段；成功时返回 `code/message/data`；失败时返回统一错误结构；不得绕过 Agent 或单独调用旧的 `LLMService.chat()`。
+- implementation notes：请求体固定为 `userId` 和 `message`；成功时返回 `code/message/data`；失败时返回统一错误结构；不得绕过 Agent 或单独调用旧的 `LLMService.chat()`；告警建单链路若需要额外配置，一律从全局配置读取，不通过 `/chat` 追加业务上下文字段。
 - acceptance criteria：`/chat` 与 LINE 文本消息的工具调用和降级行为一致；参数错误与外部服务错误都返回稳定 JSON。
 
 ## 验收与测试
