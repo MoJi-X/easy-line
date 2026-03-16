@@ -1,627 +1,358 @@
-# API接口设计文档
+# API 接口设计文档
 
 ## 文档信息
 
 | 项目名称 | LINE Bot 智能消息处理系统 |
 |---------|-------------------------|
-| 文档版本 | V2.0 (Demo版) |
+| 文档版本 | V3.0（Agent + 动态任务版） |
 | 创建日期 | 2026-03-11 |
-| 更新日期 | 2026-03-12 |
-| 技术栈 | @line/bot-sdk + Express |
+| 更新日期 | 2026-03-16 |
+| 技术栈 | `@line/bot-sdk` + Express + LangChain Agent |
 | 文档状态 | 待评审 |
 
 ---
 
 ## 1. 接口概述
 
-### 1.1 接口规范
+### 1.1 设计原则
 
-| 项目 | 规范 |
-|------|------|
-| 协议 | HTTPS |
-| 数据格式 | JSON |
-| 字符编码 | UTF-8 |
-| 时间格式 | ISO 8601 (YYYY-MM-DDTHH:mm:ss.sssZ) |
-| LINE SDK | @line/bot-sdk v7.x |
-| Web框架 | Express v4.x |
+- `POST /webhook` 保持 LINE 回调约定，仅返回 `{ "status": "ok" }`
+- 内部接口统一返回 JSON
+- `/chat` 与 LINE 消息必须走同一 Agent 流程
+- 内部任务管理接口只操作“当前用户自己的任务”
 
-### 1.2 基础URL
+### 1.2 通用响应格式
 
-```
-生产环境: https://your-domain.com
-测试环境: http://localhost:3000 (配合ngrok)
-```
+**成功响应**
 
-### 1.3 LINE Messaging API 基础
-
-本项目使用 LINE 官方 SDK `@line/bot-sdk` 进行开发，主要涉及以下 API：
-
-| API | 用途 | SDK方法 |
-|-----|------|---------|
-| Webhook | 接收用户消息事件 | middleware + webhook handler |
-| Reply Message | 回复用户消息 | `client.replyMessage()` |
-| Push Message | 主动推送消息 | `client.pushMessage()` |
-| Multicast | 批量推送消息 | `client.multicast()` |
-
-### 1.4 通用响应格式
-
-**成功响应：**
 ```json
 {
-  "code": 0,
-  "message": "success",
-  "data": { ... }
+  "code": "OK",
+  "message": "ok",
+  "data": {}
 }
 ```
 
-**错误响应：**
+**错误响应**
+
 ```json
 {
-  "code": 1001,
-  "message": "参数错误",
+  "code": "INVALID_ARGUMENT",
+  "message": "dailyTime must use HH:mm format.",
   "errors": [
     {
-      "field": "task_name",
-      "message": "任务名称不能为空"
+      "field": "dailyTime",
+      "message": "Expected HH:mm."
     }
   ]
 }
 ```
 
-### 1.5 错误码定义
+### 1.3 错误码定义
 
 | 错误码 | 说明 |
 |--------|------|
-| 0 | 成功 |
-| 1001 | 参数错误 |
-| 1002 | 资源不存在 |
-| 2001 | 签名验证失败 |
-| 3001 | 服务内部错误 |
-| 3002 | 第三方服务错误 |
+| `OK` | 成功 |
+| `INVALID_ARGUMENT` | 参数错误 |
+| `RESOURCE_NOT_FOUND` | 资源不存在 |
+| `FORBIDDEN_TASK_ACCESS` | 无权操作当前任务 |
+| `INVALID_LINE_SIGNATURE` | Webhook 签名校验失败 |
+| `EXTERNAL_SERVICE_ERROR` | LLM、Tavily、天气 API 等外部服务错误 |
+| `INTERNAL_ERROR` | 服务内部错误 |
 
 ---
 
-## 2. Webhook接口
+## 2. Webhook 接口
 
-### 2.1 LINE Webhook回调
-
-接收LINE服务器推送的消息事件，使用 `@line/bot-sdk` 的中间件进行签名验证。
-
-**请求信息：**
+### 2.1 LINE Webhook 回调
 
 | 项目 | 说明 |
 |------|------|
 | URL | `POST /webhook` |
-| 认证 | X-Line-Signature 签名验证 |
-| 来源 | LINE服务器 |
-| SDK | `middleware()` 自动验证签名 |
+| 认证 | `X-Line-Signature` 签名校验 |
+| 来源 | LINE 服务器 |
+| 处理方式 | 快速确认后异步进入 Agent 链路 |
 
-**Express 路由配置：**
+**响应**
 
-```typescript
-import express from 'express';
-import { middleware, Client } from '@line/bot-sdk';
-
-const app = express();
-
-const config = {
-  channelSecret: process.env.LINE_CHANNEL_SECRET!,
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN!
-};
-
-const client = new Client(config);
-
-app.post('/webhook', middleware(config), async (req, res) => {
-  const events = req.body.events;
-  
-  try {
-    await Promise.all(events.map(event => handleEvent(event)));
-    res.status(200).json({ status: 'ok' });
-  } catch (err) {
-    console.error('Webhook error:', err);
-    res.status(500).json({ status: 'error' });
-  }
-});
-```
-
-**请求头：**
-
-| Header | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| X-Line-Signature | string | 是 | 请求签名（SDK自动验证） |
-| Content-Type | string | 是 | application/json |
-
-**请求体（Webhook Event）：**
-```json
-{
-  "destination": "U1234567890abcdef",
-  "events": [
-    {
-      "type": "message",
-      "replyToken": "nHuyWiB7yP5Zw52FIkcQobQuGDXCTA",
-      "timestamp": 1462629479859,
-      "source": {
-        "type": "user",
-        "userId": "U4af4980629..."
-      },
-      "message": {
-        "id": "325708",
-        "type": "text",
-        "text": "今天天气怎么样"
-      }
-    }
-  ]
-}
-```
-
-**响应：**
 ```json
 {
   "status": "ok"
 }
 ```
 
-### 2.2 消息事件处理
+### 2.2 文本消息处理约束
 
-**事件类型：**
-
-| 事件类型 | 说明 | SDK类型 |
-|---------|------|---------|
-| message | 消息事件 | MessageEvent |
-| follow | 关注事件 | FollowEvent |
-| unfollow | 取消关注 | UnfollowEvent |
-| join | 加入群组 | JoinEvent |
-| leave | 离开群组 | LeaveEvent |
-
-**消息处理器实现：**
-
-```typescript
-import { 
-  WebhookEvent, 
-  MessageEvent, 
-  TextMessage,
-  Client 
-} from '@line/bot-sdk';
-
-async function handleEvent(event: WebhookEvent): Promise<void> {
-  if (event.type !== 'message' || event.message.type !== 'text') {
-    return;
-  }
-
-  const messageEvent = event as MessageEvent;
-  const userMessage = messageEvent.message.text;
-  const userId = messageEvent.source.userId;
-  const replyToken = messageEvent.replyToken;
-
-  const replyText = await generateReply(userId, userMessage);
-
-  await client.replyMessage(replyToken, {
-    type: 'text',
-    text: replyText
-  } as TextMessage);
-}
-```
+- 仅文本消息进入 Agent 业务处理。
+- 当前用户由 `event.source.userId` 决定。
+- Slash Command 与自然语言都通过 Agent 统一解析。
+- 非文本消息直接跳过，不返回业务错误。
 
 ---
 
-## 3. 消息回复接口
+## 3. Agent 调试接口
 
-### 3.1 Reply Message（回复消息）
+### 3.1 `POST /chat`
 
-使用 `replyToken` 回复用户消息，replyToken 有效期为30秒。
+用于在不依赖 LINE Webhook 的情况下验证同一 Agent 流程。
 
-**SDK调用：**
-
-```typescript
-await client.replyMessage(replyToken, messages);
-```
-
-**消息类型：**
-
-| 类型 | 说明 | 用途 |
-|------|------|------|
-| text | 文本消息 | 普通文本回复 |
-| flex | Flex消息 | 富媒体消息 |
-| image | 图片消息 | 图片展示 |
-| sticker | 表情消息 | LINE表情 |
-
-**文本消息示例：**
-
-```typescript
-const textMessage: TextMessage = {
-  type: 'text',
-  text: '你好！有什么可以帮助你的吗？'
-};
-
-await client.replyMessage(replyToken, textMessage);
-```
-
-**多消息回复示例：**
-
-```typescript
-await client.replyMessage(replyToken, [
-  { type: 'text', text: '收到你的消息了！' },
-  { type: 'text', text: '正在处理中...' }
-]);
-```
-
-### 3.2 Push Message（主动推送）
-
-主动向用户推送消息，无需用户先发送消息。
-
-**SDK调用：**
-
-```typescript
-await client.pushMessage(userId, messages);
-```
-
-**推送示例：**
-
-```typescript
-await client.pushMessage('U1234567890abcdef', {
-  type: 'text',
-  text: '这是一条主动推送的消息'
-});
-```
-
-### 3.3 Multicast（批量推送）
-
-向多个用户同时推送相同消息。
-
-**SDK调用：**
-
-```typescript
-await client.multicast(userIds, messages);
-```
-
-**批量推送示例：**
-
-```typescript
-const userIds = ['U1234567890', 'U0987654321'];
-
-await client.multicast(userIds, {
-  type: 'text',
-  text: '群发消息内容'
-});
-```
-
----
-
-## 4. 定时任务接口
-
-### 4.1 任务配置文件格式
-
-Demo版本使用 JSON 文件配置定时任务，配合 `node-cron` 执行。
-
-**配置文件：`config/tasks.json`**
+**请求体**
 
 ```json
 {
-  "tasks": [
-    {
-      "id": "weather-push",
-      "name": "每日天气推送",
-      "enabled": true,
-      "schedule": "0 8 * * *",
-      "api": {
-        "url": "https://api.weather.com/v1/current",
-        "method": "GET",
-        "headers": {
-          "Authorization": "Bearer ${WEATHER_API_KEY}"
-        }
-      },
-      "template": "今日天气: {weather}, 温度: {temp}°C",
-      "targets": ["U1234567890"]
-    }
-  ]
+  "userId": "U1234567890",
+  "message": "每天早上 8 点给我推送北京天气"
 }
 ```
 
-### 4.2 定时任务服务实现
+**成功响应**
 
-```typescript
-import cron from 'node-cron';
-import { Client } from '@line/bot-sdk';
-import axios from 'axios';
-
-interface TaskConfig {
-  id: string;
-  name: string;
-  enabled: boolean;
-  schedule: string;
-  api: {
-    url: string;
-    method: string;
-    headers?: Record<string, string>;
-  };
-  template: string;
-  targets: string[];
-}
-
-export class SchedulerService {
-  private tasks: Map<string, cron.ScheduledTask> = new Map();
-  
-  constructor(private client: Client) {}
-
-  loadTasks(config: { tasks: TaskConfig[] }): void {
-    for (const task of config.tasks) {
-      if (!task.enabled) continue;
-      
-      const scheduledTask = cron.schedule(task.schedule, () => {
-        this.executeTask(task);
-      });
-      
-      this.tasks.set(task.id, scheduledTask);
-      console.log(`Task loaded: ${task.name}`);
-    }
-  }
-
-  private async executeTask(task: TaskConfig): Promise<void> {
-    try {
-      const response = await axios({
-        method: task.api.method,
-        url: task.api.url,
-        headers: task.api.headers
-      });
-
-      const message = this.renderTemplate(task.template, response.data);
-      
-      await this.client.multicast(task.targets, {
-        type: 'text',
-        text: message
-      });
-      
-      console.log(`Task executed: ${task.name}`);
-    } catch (error) {
-      console.error(`Task failed: ${task.name}`, error);
-    }
-  }
-
-  private renderTemplate(template: string, data: Record<string, any>): string {
-    return template.replace(/\{(\w+)\}/g, (_, key) => data[key] ?? '');
-  }
-}
-```
-
-### 4.3 手动触发任务（管理接口）
-
-**请求信息：**
-
-| 项目 | 说明 |
-|------|------|
-| URL | `POST /api/tasks/{task_id}/execute` |
-| 认证 | Bearer Token（Demo版简化） |
-
-**响应：**
 ```json
 {
-  "code": 0,
-  "message": "success",
+  "code": "OK",
+  "message": "ok",
   "data": {
-    "task_id": "weather-push",
-    "status": "executed"
+    "userId": "U1234567890",
+    "message": "每天早上 8 点给我推送北京天气",
+    "reply": "好的，我已经为你创建了每天 08:00 推送北京天气的任务。",
+    "usedTools": [
+      "task.create"
+    ]
+  }
+}
+```
+
+**行为要求**
+
+- 与 LINE 文本消息共用同一 Agent 入口
+- 支持自然语言任务管理
+- 支持 Slash Command 测试
+- 支持 Tavily 搜索自动决策
+
+---
+
+## 4. 任务管理接口
+
+### 4.1 任务对象
+
+```json
+{
+  "id": "weather-001",
+  "type": "daily_weather",
+  "name": "北京天气提醒",
+  "ownerUserId": "U1234567890",
+  "city": "北京",
+  "dailyTime": "08:00",
+  "enabled": true,
+  "source": "natural_language",
+  "createdAt": "2026-03-16T08:00:00.000Z",
+  "updatedAt": "2026-03-16T08:00:00.000Z"
+}
+```
+
+### 4.2 `GET /api/tasks`
+
+查询当前用户任务。
+
+**查询参数**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `userId` | string | 是 | 当前用户 ID |
+
+**示例**
+
+`GET /api/tasks?userId=U1234567890`
+
+**成功响应**
+
+```json
+{
+  "code": "OK",
+  "message": "ok",
+  "data": {
+    "tasks": [
+      {
+        "id": "weather-001",
+        "type": "daily_weather",
+        "name": "北京天气提醒",
+        "ownerUserId": "U1234567890",
+        "city": "北京",
+        "dailyTime": "08:00",
+        "enabled": true,
+        "source": "natural_language",
+        "createdAt": "2026-03-16T08:00:00.000Z",
+        "updatedAt": "2026-03-16T08:00:00.000Z"
+      }
+    ],
+    "recentExecutions": []
+  }
+}
+```
+
+### 4.3 `POST /api/tasks`
+
+创建当前用户任务。
+
+**请求体**
+
+```json
+{
+  "userId": "U1234567890",
+  "city": "北京",
+  "dailyTime": "08:00",
+  "enabled": true,
+  "source": "api"
+}
+```
+
+**约束**
+
+- `type` 固定为 `daily_weather`
+- `dailyTime` 使用 `HH:mm`
+- `ownerUserId` 由 `userId` 推导
+- 不支持自定义 Cron 或自定义推送目标
+
+### 4.4 `PATCH /api/tasks/:taskId`
+
+更新当前用户任务。
+
+**请求体**
+
+```json
+{
+  "userId": "U1234567890",
+  "city": "上海",
+  "dailyTime": "09:00",
+  "enabled": true
+}
+```
+
+**约束**
+
+- 仅允许更新 `city`、`dailyTime`、`enabled`
+- 若任务不属于当前 `userId`，返回 `FORBIDDEN_TASK_ACCESS`
+
+### 4.5 `DELETE /api/tasks/:taskId`
+
+删除当前用户任务。
+
+**查询参数**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `userId` | string | 是 | 当前用户 ID |
+
+**示例**
+
+`DELETE /api/tasks/weather-001?userId=U1234567890`
+
+**成功响应**
+
+```json
+{
+  "code": "OK",
+  "message": "ok",
+  "data": {
+    "taskId": "weather-001",
+    "deleted": true
+  }
+}
+```
+
+### 4.6 `POST /api/tasks/:taskId/execute`
+
+手动执行任务，用于调试和演示。
+
+**请求体**
+
+```json
+{
+  "userId": "U1234567890"
+}
+```
+
+**成功响应**
+
+```json
+{
+  "code": "OK",
+  "message": "ok",
+  "data": {
+    "taskId": "weather-001",
+    "message": "Task executed successfully."
   }
 }
 ```
 
 ---
 
-## 5. LLM对话接口
+## 5. Slash Command 语义
 
-### 5.1 LangChain集成
+这些命令由 Agent 在消息链路中解析，不直接作为 HTTP 管理接口。
 
-使用 LangChain 1.x 的 `@langchain/core` 与 `@langchain/openai` 实现与大模型的对话交互。
+| 命令 | 示例 | 说明 |
+|------|------|------|
+| `/task list` | `/task list` | 列出当前用户所有任务 |
+| `/task create` | `/task create city=北京 time=08:00 enabled=true` | 创建任务 |
+| `/task update` | `/task update taskId=weather-001 time=09:00` | 更新任务 |
+| `/task delete` | `/task delete taskId=weather-001` | 删除任务 |
 
-**服务实现：**
-
-```typescript
-import { ChatOpenAI } from '@langchain/openai';
-import {
-  AIMessage,
-  HumanMessage,
-  type BaseMessage,
-} from '@langchain/core/messages';
-import { config } from '../config';
-
-export class LLMService {
-  private readonly model = new ChatOpenAI({
-    model: config.llmModel,
-    temperature: 0.7,
-    apiKey: config.llmApiKey,
-    configuration: config.llmBaseUrl
-      ? { baseURL: config.llmBaseUrl }
-      : undefined,
-  });
-  private readonly memories: Map<string, BaseMessage[]> = new Map();
-  private readonly maxContextMessages = 6;
-
-  async chat(userId: string, message: string): Promise<string> {
-    const history = this.memories.get(userId) ?? [];
-    const response = await this.model.invoke([
-      ...history,
-      new HumanMessage(message),
-    ]);
-    const reply =
-      typeof response.content === 'string' ? response.content : '';
-    const nextHistory = [
-      ...history,
-      new HumanMessage(message),
-      new AIMessage(reply),
-    ].slice(-this.maxContextMessages);
-
-    this.memories.set(userId, nextHistory);
-    return reply;
-  }
-}
-```
-
-### 5.2 上下文管理
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| context_max_length | 3 | 保留最近N条对话 |
-| memory_type | `Map<string, BaseMessage[]>` | 内存存储 |
+缺少必要参数时，Agent 返回命令用法说明，不直接写入任务。
 
 ---
 
 ## 6. 健康检查接口
 
-### 6.1 健康检查
+### 6.1 `GET /health`
 
-**请求信息：**
+**成功响应**
 
-| 项目 | 说明 |
-|------|------|
-| URL | `GET /health` |
-| 认证 | 无 |
-
-**Express实现：**
-
-```typescript
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    services: {
-      line_api: 'connected',
-      llm: 'ready'
+```json
+{
+  "code": "OK",
+  "message": "ok",
+  "data": {
+    "status": "ok",
+    "timestamp": "2026-03-16T10:00:00.000Z",
+    "services": {
+      "agent": "ready",
+      "scheduler": "running",
+      "taskCount": 3
     }
-  });
-});
-```
-
-**响应：**
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-03-12T10:00:00.000Z",
-  "services": {
-    "line_api": "connected",
-    "llm": "ready"
   }
-}
-```
-
-### 6.2 就绪检查
-
-**请求信息：**
-
-| 项目 | 说明 |
-|------|------|
-| URL | `GET /ready` |
-| 认证 | 无 |
-
-**响应：**
-```json
-{
-  "ready": true,
-  "timestamp": "2026-03-12T10:00:00.000Z"
 }
 ```
 
 ---
 
-## 7. 完整服务入口
+## 7. 外部依赖接口约束
 
-### 7.1 主入口文件
+### 7.1 LLM
 
-```typescript
-import express from 'express';
-import { middleware, Client, WebhookEvent } from '@line/bot-sdk';
-import { LLMService } from './services/llm';
-import { SchedulerService } from './services/scheduler';
-import taskConfig from './config/tasks.json';
+- 通过 LangChain Agent 调用 OpenAI-compatible 模型
+- 使用 `LLM_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL` 配置
 
-const app = express();
-const port = process.env.PORT || 3000;
+### 7.2 Tavily
 
-const lineConfig = {
-  channelSecret: process.env.LINE_CHANNEL_SECRET!,
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN!
-};
+- 使用 `TAVILY_API_KEY`
+- 仅用于实时外部信息查询
 
-const client = new Client(lineConfig);
-const llmService = new LLMService();
-const schedulerService = new SchedulerService(client);
+### 7.3 天气 API
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date().toISOString() });
-});
-
-app.post('/webhook', middleware(lineConfig), async (req, res) => {
-  try {
-    const events: WebhookEvent[] = req.body.events;
-    
-    await Promise.all(events.map(async (event) => {
-      if (event.type === 'message' && event.message.type === 'text') {
-        const userId = event.source.userId!;
-        const userMessage = event.message.text;
-        const replyToken = event.replyToken;
-        
-        const reply = await llmService.chat(userId, userMessage);
-        
-        await client.replyMessage(replyToken, {
-          type: 'text',
-          text: reply
-        });
-      }
-    }));
-    
-    res.status(200).json({ status: 'ok' });
-  } catch (error) {
-    console.error('Webhook error:', error);
-    res.status(500).json({ status: 'error' });
-  }
-});
-
-schedulerService.loadTasks(taskConfig);
-
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
-```
+- 请求必须设置超时
+- 输入至少包含城市或可映射到城市的查询参数
+- 响应转换为文本消息时，不直接暴露原始敏感返回头
 
 ---
 
-## 8. 附录
-
-### 8.1 LINE消息类型速查
-
-| 类型 | 结构 | 用途 |
-|------|------|------|
-| TextMessage | `{ type: 'text', text: string }` | 文本消息 |
-| ImageMessage | `{ type: 'image', originalContentUrl, previewImageUrl }` | 图片消息 |
-| FlexMessage | `{ type: 'flex', altText, contents }` | Flex消息 |
-
-### 8.2 Cron表达式说明
-
-| 表达式 | 说明 |
-|--------|------|
-| `0 8 * * *` | 每天8:00 |
-| `0 9,18 * * *` | 每天9:00和18:00 |
-| `*/30 * * * *` | 每30分钟 |
-| `0 0 * * 1` | 每周一0:00 |
-
-### 8.3 环境变量配置
-
-```bash
-# .env
-PORT=3000
-
-# LINE配置
-LINE_CHANNEL_SECRET=your-channel-secret
-LINE_CHANNEL_ACCESS_TOKEN=your-access-token
-
-# OpenAI配置
-OPENAI_API_KEY=your-openai-api-key
-```
-
-### 8.4 修订历史
+## 8. 修订历史
 
 | 版本 | 日期 | 修订内容 |
 |------|------|---------|
 | V1.0 | 2026-03-11 | 初始版本 |
-| V2.0 | 2026-03-12 | 更新为 @line/bot-sdk + Express 技术栈，精简为Demo版本 |
+| V2.0 | 2026-03-12 | 精简为 Demo 版本 |
+| V3.0 | 2026-03-16 | 新增 Agent 调试、动态任务 CRUD 与 Slash Command 语义 |
 
 ---
 

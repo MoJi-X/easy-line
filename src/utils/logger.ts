@@ -127,3 +127,11 @@ export const maskUserId = (userId: string | null | undefined): string => {
 
   return `${userId.slice(0, 2)}***${userId.slice(-2)}`;
 };
+
+export const maskToken = (token: string | null | undefined): string => {
+  if (!token || token.length < 8) {
+    return '****';
+  }
+
+  return `${token.slice(0, 4)}***${token.slice(-4)}`;
+};
