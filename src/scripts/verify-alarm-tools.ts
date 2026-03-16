@@ -44,6 +44,7 @@ const createVerificationServer = (): Promise<{
     page_size: string | null;
     status: string | null;
   } | null;
+  getLastProcessRequest: () => unknown;
   server: Server;
 }> => {
   let lastListRequest: {
@@ -51,6 +52,7 @@ const createVerificationServer = (): Promise<{
     page_size: string | null;
     status: string | null;
   } | null = null;
+  let lastProcessRequest: unknown;
 
   const server = createServer((req, res) => {
     void (async () => {
@@ -81,6 +83,13 @@ const createVerificationServer = (): Promise<{
               alarm_code: '130',
               processingStatus: 'Untreated',
               createdAt: '2026-03-16 09:20:00',
+              raw_data: JSON.stringify({
+                deviceSn: 'INV-0001',
+                siteName: 'Bangkok PV Site',
+                alarm_code: '130',
+                processingStatus: 'Untreated',
+                createdAt: '2026-03-16 09:20:00',
+              }),
             },
           ],
         });
@@ -89,8 +98,11 @@ const createVerificationServer = (): Promise<{
 
       if (req.method === 'POST' && requestUrl.pathname === '/api/v1/process_alarms') {
         const body = await readJsonBody(req);
-        const alarm = body && typeof body === 'object' && 'alarm' in body
-          ? (body as { alarm?: unknown }).alarm
+        lastProcessRequest = body;
+        const alarm = body && typeof body === 'object' && 'alarms' in body
+          ? Array.isArray((body as { alarms?: unknown }).alarms)
+            ? (body as { alarms?: unknown[] }).alarms?.[0]
+            : undefined
           : undefined;
         const alarmId =
           alarm && typeof alarm === 'object' && alarm !== null && 'id' in alarm
@@ -152,6 +164,7 @@ const createVerificationServer = (): Promise<{
         server,
         baseUrl: `http://127.0.0.1:${address.port}`,
         getLastListRequest: () => lastListRequest,
+        getLastProcessRequest: () => lastProcessRequest,
       });
     });
   });
@@ -178,7 +191,8 @@ const findTool = (tools: GenericTool[], name: string): GenericTool => {
 };
 
 const verify = async (): Promise<void> => {
-  const { server, baseUrl, getLastListRequest } = await createVerificationServer();
+  const { server, baseUrl, getLastListRequest, getLastProcessRequest } =
+    await createVerificationServer();
 
   try {
     const tools = createAlarmTools({
@@ -253,6 +267,11 @@ const verify = async (): Promise<void> => {
         id: 101,
         device_sn: 'INV-0001',
         siteName: 'Bangkok PV Site',
+        raw_data: JSON.stringify({
+          deviceSn: 'INV-0001',
+          siteName: 'Bangkok PV Site',
+          alarm_code: '130',
+        }),
       },
     })) as {
       analysis_markdown: string;
@@ -266,12 +285,30 @@ const verify = async (): Promise<void> => {
     assert.match(analyzeResult.analysis_markdown, /分析结论/u);
     assert.match(analyzeResult.analysis_markdown, /建议派单/u);
     assert.ok(analyzeResult.raw_events.length >= 2);
+    assert.deepEqual(getLastProcessRequest(), {
+      session_id: 'session-123',
+      alarms: [
+        {
+          id: 101,
+          deviceSn: 'INV-0001',
+          siteName: 'Bangkok PV Site',
+          alarm_code: '130',
+        },
+      ],
+      mode: 'standard',
+      business_type: 'device_alarm',
+      force_reanalyze: false,
+      language: 'zh',
+    });
 
     const interruptedAnalyzeResult = (await analyzeAlarmTool.invoke({
       session_id: 'session-123',
       alarm: {
         id: 999,
         device_sn: 'INV-999',
+        raw_data: JSON.stringify({
+          deviceSn: 'INV-999',
+        }),
       },
     })) as {
       error_type: string;
@@ -282,6 +319,23 @@ const verify = async (): Promise<void> => {
     assert.equal(interruptedAnalyzeResult.success, false);
     assert.equal(interruptedAnalyzeResult.error_type, 'alarm_analysis_failed');
     assert.match(interruptedAnalyzeResult.partial_analysis ?? '', /INV-999/u);
+
+    const missingIdResult = (await analyzeAlarmTool.invoke({
+      session_id: 'session-123',
+      alarm: {
+        raw_data: JSON.stringify({
+          deviceSn: 'INV-404',
+        }),
+      },
+    })) as {
+      error_type: string;
+      message: string;
+      success: boolean;
+    };
+
+    assert.equal(missingIdResult.success, false);
+    assert.equal(missingIdResult.error_type, 'invalid_tool_input');
+    assert.match(missingIdResult.message, /id must not be empty/u);
 
     console.info('Alarm tools verification passed.');
   } finally {

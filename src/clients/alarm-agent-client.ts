@@ -41,7 +41,7 @@ export interface AlarmListAlarmsParams {
 }
 
 export interface AlarmProcessAlarmsRequest {
-  alarm: Record<string, unknown>;
+  alarms: Record<string, unknown>[];
   business_type?: string;
   force_reanalyze?: boolean;
   language?: string;
@@ -125,11 +125,23 @@ const extractReadableMessage = (payload: unknown): string | undefined => {
     return normalizedPayload.length > 0 ? normalizedPayload : undefined;
   }
 
+  if (Array.isArray(payload)) {
+    const messages = payload
+      .map((item) => extractReadableMessage(item))
+      .filter((item): item is string => Boolean(item));
+
+    if (messages.length === 0) {
+      return undefined;
+    }
+
+    return [...new Set(messages)].slice(0, 3).join('; ');
+  }
+
   if (!payload || typeof payload !== 'object') {
     return undefined;
   }
 
-  const candidateKeys = ['message', 'detail', 'error'];
+  const candidateKeys = ['message', 'detail', 'error', 'msg'];
 
   for (const key of candidateKeys) {
     const value = (payload as Record<string, unknown>)[key];
@@ -170,6 +182,40 @@ const summarizePayload = (payload: unknown): unknown => {
   }
 
   return payload;
+};
+
+const parseResponsePayload = (value: string): unknown => {
+  const normalizedValue = value.trim();
+
+  if (!normalizedValue) {
+    return undefined;
+  }
+
+  try {
+    return JSON.parse(normalizedValue) as unknown;
+  } catch {
+    return normalizedValue;
+  }
+};
+
+const readAxiosResponseData = async (data: unknown): Promise<unknown> => {
+  if (!(data instanceof Readable)) {
+    return data;
+  }
+
+  let responseText = '';
+
+  try {
+    for await (const chunk of data) {
+      responseText += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+    }
+
+    return parseResponsePayload(responseText);
+  } catch {
+    return undefined;
+  } finally {
+    data.destroy();
+  }
 };
 
 const normalizeSseChunk = (chunk: unknown): string => {
@@ -347,7 +393,7 @@ export class AlarmAgentClient {
 
       return result;
     } catch (error) {
-      const wrappedError = this.wrapRequestError('processAlarmsSse', error);
+      const wrappedError = await this.wrapRequestError('processAlarmsSse', error);
 
       alarmClientLogger.error(
         'alarm request failed',
@@ -473,7 +519,7 @@ export class AlarmAgentClient {
 
       return response.data;
     } catch (error) {
-      const wrappedError = this.wrapRequestError(operation, error);
+      const wrappedError = await this.wrapRequestError(operation, error);
 
       alarmClientLogger.error(
         'alarm request failed',
@@ -490,10 +536,10 @@ export class AlarmAgentClient {
     }
   }
 
-  private wrapRequestError(
+  private async wrapRequestError(
     operation: AlarmAgentOperation,
     error: unknown,
-  ): AlarmAgentClientError {
+  ): Promise<AlarmAgentClientError> {
     if (error instanceof AlarmAgentClientError) {
       return error;
     }
@@ -512,10 +558,10 @@ export class AlarmAgentClient {
     );
   }
 
-  private wrapAxiosError(
+  private async wrapAxiosError(
     operation: AlarmAgentOperation,
     error: AxiosError,
-  ): AlarmAgentClientError {
+  ): Promise<AlarmAgentClientError> {
     if (error.code === 'ECONNABORTED') {
       return new AlarmAgentClientError(
         'TIMEOUT',
@@ -528,9 +574,10 @@ export class AlarmAgentClient {
     }
 
     if (error.response) {
-      const responseSummary = summarizePayload(error.response.data);
+      const responseData = await readAxiosResponseData(error.response.data);
+      const responseSummary = summarizePayload(responseData);
       const readableMessage =
-        extractReadableMessage(error.response.data) ?? 'Unknown upstream error.';
+        extractReadableMessage(responseData) ?? 'Unknown upstream error.';
 
       return new AlarmAgentClientError(
         'UPSTREAM_ERROR',

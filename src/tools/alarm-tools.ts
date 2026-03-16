@@ -1,4 +1,4 @@
-import { tool } from 'langchain';
+import { tool } from "langchain";
 
 import {
   AlarmAgentClient,
@@ -6,28 +6,28 @@ import {
   type AlarmAgentClientOptions,
   type AlarmProcessAlarmsRequest,
   type AlarmSseEvent,
-} from '../clients/alarm-agent-client';
-import { config } from '../config';
-import { createAppLogger } from '../utils/app-logger';
+} from "../clients/alarm-agent-client";
+import { config } from "../config";
+import { createAppLogger } from "../utils/app-logger";
 
 const DEFAULT_ALARM_LIST_PAGE = 1;
 const DEFAULT_ALARM_LIST_PAGE_SIZE = 20;
-const DEFAULT_ALARM_LIST_STATUS = '';
-const DEFAULT_ANALYZE_MODE = 'standard';
-const DEFAULT_ANALYZE_BUSINESS_TYPE = 'device_alarm';
-const DEFAULT_ANALYZE_LANGUAGE = 'zh';
+const DEFAULT_ALARM_LIST_STATUS = "";
+const DEFAULT_ANALYZE_MODE = "standard";
+const DEFAULT_ANALYZE_BUSINESS_TYPE = "device_alarm";
+const DEFAULT_ANALYZE_LANGUAGE = "zh";
 const MAX_ANALYSIS_DEPTH = 5;
-const alarmToolLogger = createAppLogger('alarm-tools');
+const alarmToolLogger = createAppLogger("alarm-tools");
 
-const CREATE_ALARM_SESSION_TOOL_NAME = 'create_alarm_session';
-const LIST_ALARMS_TOOL_NAME = 'list_alarms';
-const ANALYZE_ALARM_TOOL_NAME = 'analyze_alarm';
+const CREATE_ALARM_SESSION_TOOL_NAME = "create_alarm_session";
+const LIST_ALARMS_TOOL_NAME = "list_alarms";
+const ANALYZE_ALARM_TOOL_NAME = "analyze_alarm";
 
 type AlarmToolFailureType =
-  | 'invalid_tool_input'
-  | 'alarm_session_failed'
-  | 'alarm_list_failed'
-  | 'alarm_analysis_failed';
+  | "invalid_tool_input"
+  | "alarm_session_failed"
+  | "alarm_list_failed"
+  | "alarm_analysis_failed";
 
 export interface AlarmToolsOptions {
   client?: AlarmAgentClient;
@@ -73,7 +73,7 @@ export interface ListAlarmsSuccess {
 export interface AnalyzeAlarmSuccess {
   analysis_markdown: string;
   raw_events: AlarmSseEvent[];
-  recommended_action_hint: 'create_work_order' | null;
+  recommended_action_hint: "create_work_order" | null;
   session_id: string;
   should_offer_dispatch: boolean | null;
   success: true;
@@ -90,21 +90,30 @@ type AlarmListAlarmsInput = {
   status: string;
 };
 
+type AnalyzeAlarmToolInput = {
+  alarm: Record<string, unknown>;
+  business_type?: string;
+  force_reanalyze?: boolean;
+  language?: string;
+  mode?: string;
+  session_id: string;
+};
+
 type AnalyzeAlarmInput = AlarmProcessAlarmsRequest;
 
 const CREATE_ALARM_SESSION_SCHEMA = {
-  type: 'object',
+  type: "object",
   properties: {},
   additionalProperties: false,
 } as const;
 
 const LIST_ALARMS_SCHEMA = {
-  type: 'object',
+  type: "object",
   properties: {
-    status: { type: 'string', default: DEFAULT_ALARM_LIST_STATUS },
-    page: { type: 'integer', minimum: 1, default: DEFAULT_ALARM_LIST_PAGE },
+    status: { type: "string", default: DEFAULT_ALARM_LIST_STATUS },
+    page: { type: "integer", minimum: 1, default: DEFAULT_ALARM_LIST_PAGE },
     page_size: {
-      type: 'integer',
+      type: "integer",
       minimum: 1,
       maximum: 100,
       default: DEFAULT_ALARM_LIST_PAGE_SIZE,
@@ -114,28 +123,68 @@ const LIST_ALARMS_SCHEMA = {
 } as const;
 
 const ANALYZE_ALARM_SCHEMA = {
-  type: 'object',
+  type: "object",
   properties: {
-    session_id: { type: 'string' },
-    alarm: { type: 'object' },
-    mode: { type: 'string', default: DEFAULT_ANALYZE_MODE },
+    session_id: { type: "string" },
+    alarm: { type: "object" },
+    mode: { type: "string", default: DEFAULT_ANALYZE_MODE },
     business_type: {
-      type: 'string',
+      type: "string",
       default: DEFAULT_ANALYZE_BUSINESS_TYPE,
     },
-    force_reanalyze: { type: 'boolean', default: false },
-    language: { type: 'string', default: DEFAULT_ANALYZE_LANGUAGE },
+    force_reanalyze: { type: "boolean", default: false },
+    language: { type: "string", default: DEFAULT_ANALYZE_LANGUAGE },
   },
-  required: ['session_id', 'alarm'],
+  required: ["session_id", "alarm"],
   additionalProperties: false,
 } as const;
 
+const ALARM_ID_PATHS = [["id"], ["alarm_id"], ["alarmId"]] as const;
+const ALARM_DEVICE_SN_PATHS = [
+  ["device_sn"],
+  ["deviceSn"],
+  ["externalId"],
+  ["external_id"],
+  ["deviceSN"],
+  ["deviceId"],
+  ["device_id"],
+] as const;
+const ALARM_SITE_NAME_PATHS = [
+  ["site_name"],
+  ["siteName"],
+  ["station_name"],
+  ["stationName"],
+] as const;
+const ALARM_CODE_PATHS = [
+  ["alarm_code"],
+  ["alarmCode"],
+  ["fault_code"],
+  ["faultCode"],
+  ["alarm_fault_code"],
+] as const;
+const ALARM_PROCESSING_STATUS_PATHS = [
+  ["processing_status"],
+  ["processingStatus"],
+  ["currentStatus"],
+  ["current_status"],
+  ["status"],
+] as const;
+const ALARM_CREATED_AT_PATHS = [
+  ["created_at"],
+  ["createdAt"],
+  ["alarm_time"],
+  ["alarmTime"],
+  ["occur_time"],
+  ["occurTime"],
+  ["createTime"],
+] as const;
+
 const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 };
 
 const normalizeString = (value: unknown): string | undefined => {
-  if (typeof value !== 'string') {
+  if (typeof value !== "string") {
     return undefined;
   }
 
@@ -143,12 +192,14 @@ const normalizeString = (value: unknown): string | undefined => {
   return normalizedValue.length > 0 ? normalizedValue : undefined;
 };
 
-const normalizeStringOrNumber = (value: unknown): string | number | undefined => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
+const normalizeStringOrNumber = (
+  value: unknown,
+): string | number | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) {
     return value;
   }
 
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     const normalizedValue = value.trim();
     return normalizedValue.length > 0 ? normalizedValue : undefined;
   }
@@ -160,11 +211,11 @@ const normalizePositiveInteger = (
   value: unknown,
   defaultValue: number,
 ): number => {
-  if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
     return value;
   }
 
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     const parsedValue = Number(value);
 
     if (Number.isInteger(parsedValue) && parsedValue > 0) {
@@ -176,7 +227,7 @@ const normalizePositiveInteger = (
 };
 
 const normalizeBoolean = (value: unknown, defaultValue: boolean): boolean => {
-  if (typeof value === 'boolean') {
+  if (typeof value === "boolean") {
     return value;
   }
 
@@ -187,10 +238,123 @@ const toRecord = (value: unknown): Record<string, unknown> => {
   return isRecord(value) ? value : {};
 };
 
-const getNestedValue = (
-  value: unknown,
-  path: readonly string[],
-): unknown => {
+const parseJsonRecord = (value: unknown): Record<string, unknown> | undefined => {
+  if (isRecord(value)) {
+    return { ...value };
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalizedValue = value.trim();
+
+  if (!normalizedValue) {
+    return undefined;
+  }
+
+  try {
+    const parsedValue = JSON.parse(normalizedValue) as unknown;
+    return isRecord(parsedValue) ? { ...parsedValue } : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const extractRawAlarmData = (
+  alarm: Record<string, unknown>,
+): {
+  alarm?: Record<string, unknown>;
+  parseError?: string;
+} => {
+  const rawDataValue = pickFirstValue(alarm, [["raw_data"], ["rawData"]]);
+
+  if (rawDataValue === undefined || rawDataValue === null) {
+    return {};
+  }
+
+  if (isRecord(rawDataValue)) {
+    return {
+      alarm: { ...rawDataValue },
+    };
+  }
+
+  if (typeof rawDataValue === "string") {
+    const normalizedValue = rawDataValue.trim();
+
+    if (!normalizedValue) {
+      return {
+        parseError: "alarm.raw_data must not be empty when provided.",
+      };
+    }
+
+    const parsedRecord = parseJsonRecord(normalizedValue);
+
+    if (parsedRecord) {
+      return {
+        alarm: parsedRecord,
+      };
+    }
+
+    return {
+      parseError: "alarm.raw_data must be a valid JSON object string.",
+    };
+  }
+
+  return {
+    parseError: "alarm.raw_data must be a JSON object or JSON string.",
+  };
+};
+
+const sanitizeAlarmEnvelope = (
+  alarm: Record<string, unknown>,
+): Record<string, unknown> => {
+  const sanitizedAlarm = { ...alarm };
+
+  delete sanitizedAlarm.raw;
+  delete sanitizedAlarm.raw_data;
+  delete sanitizedAlarm.rawData;
+
+  return sanitizedAlarm;
+};
+
+const buildProcessAlarmRecord = (
+  alarm: Record<string, unknown>,
+):
+  | {
+      alarm: Record<string, unknown>;
+    }
+  | {
+      error: string;
+    } => {
+  const rawAlarmData = extractRawAlarmData(alarm);
+
+  if (rawAlarmData.parseError) {
+    return {
+      error: rawAlarmData.parseError,
+    };
+  }
+
+  const mergedAlarm = rawAlarmData.alarm ?? sanitizeAlarmEnvelope(alarm);
+  const alarmId =
+    pickStringOrNumber(mergedAlarm, ALARM_ID_PATHS) ??
+    pickStringOrNumber(alarm, ALARM_ID_PATHS);
+
+  if (alarmId === null) {
+    return {
+      error: "alarm id must not be empty.",
+    };
+  }
+
+  return {
+    alarm: {
+      ...mergedAlarm,
+      id: alarmId,
+    },
+  };
+};
+
+const getNestedValue = (value: unknown, path: readonly string[]): unknown => {
   let current: unknown = value;
 
   for (const key of path) {
@@ -241,11 +405,11 @@ const pickNumber = (
 ): number | undefined => {
   const candidate = pickFirstValue(value, paths);
 
-  if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+  if (typeof candidate === "number" && Number.isFinite(candidate)) {
     return candidate;
   }
 
-  if (typeof candidate === 'string') {
+  if (typeof candidate === "string") {
     const parsedNumber = Number(candidate);
 
     if (Number.isFinite(parsedNumber)) {
@@ -258,12 +422,12 @@ const pickNumber = (
 
 const extractSessionId = (payload: unknown): string | undefined => {
   const candidate = pickStringOrNumber(payload, [
-    ['session_id'],
-    ['sessionId'],
-    ['data', 'session_id'],
-    ['data', 'sessionId'],
-    ['result', 'session_id'],
-    ['result', 'sessionId'],
+    ["session_id"],
+    ["sessionId"],
+    ["data", "session_id"],
+    ["data", "sessionId"],
+    ["result", "session_id"],
+    ["result", "sessionId"],
   ]);
 
   if (candidate === null) {
@@ -276,16 +440,16 @@ const extractSessionId = (payload: unknown): string | undefined => {
 const extractAlarmArray = (payload: unknown): Record<string, unknown>[] => {
   const candidates = [
     payload,
-    getNestedValue(payload, ['data']),
-    getNestedValue(payload, ['data', 'data']),
-    getNestedValue(payload, ['data', 'items']),
-    getNestedValue(payload, ['data', 'list']),
-    getNestedValue(payload, ['items']),
-    getNestedValue(payload, ['list']),
-    getNestedValue(payload, ['result']),
-    getNestedValue(payload, ['result', 'data']),
-    getNestedValue(payload, ['result', 'items']),
-    getNestedValue(payload, ['result', 'list']),
+    getNestedValue(payload, ["data"]),
+    getNestedValue(payload, ["data", "data"]),
+    getNestedValue(payload, ["data", "items"]),
+    getNestedValue(payload, ["data", "list"]),
+    getNestedValue(payload, ["items"]),
+    getNestedValue(payload, ["list"]),
+    getNestedValue(payload, ["result"]),
+    getNestedValue(payload, ["result", "data"]),
+    getNestedValue(payload, ["result", "items"]),
+    getNestedValue(payload, ["result", "list"]),
   ];
 
   for (const candidate of candidates) {
@@ -301,48 +465,37 @@ const extractAlarmArray = (payload: unknown): Record<string, unknown>[] => {
   return [];
 };
 
-const normalizeAlarmRecord = (alarm: Record<string, unknown>): NormalizedAlarmRecord => {
+const normalizeAlarmRecord = (
+  alarm: Record<string, unknown>,
+): NormalizedAlarmRecord => {
+  const rawAlarmData = extractRawAlarmData(alarm).alarm;
+
   return {
-    id: pickStringOrNumber(alarm, [['id'], ['alarm_id'], ['alarmId']]),
-    device_sn: pickString(alarm, [
-      ['device_sn'],
-      ['deviceSn'],
-      ['externalId'],
-      ['deviceSN'],
-    ]),
-    site_name: pickString(alarm, [
-      ['site_name'],
-      ['siteName'],
-      ['station_name'],
-      ['stationName'],
-    ]),
-    alarm_code: pickString(alarm, [
-      ['alarm_code'],
-      ['alarmCode'],
-      ['fault_code'],
-      ['faultCode'],
-    ]),
-    processing_status: pickString(alarm, [
-      ['processing_status'],
-      ['processingStatus'],
-      ['currentStatus'],
-      ['status'],
-    ]),
-    created_at: pickString(alarm, [
-      ['created_at'],
-      ['createdAt'],
-      ['alarm_time'],
-      ['alarmTime'],
-      ['occur_time'],
-      ['occurTime'],
-    ]),
+    id:
+      pickStringOrNumber(alarm, ALARM_ID_PATHS) ??
+      pickStringOrNumber(rawAlarmData, ALARM_ID_PATHS),
+    device_sn:
+      pickString(alarm, ALARM_DEVICE_SN_PATHS) ??
+      pickString(rawAlarmData, ALARM_DEVICE_SN_PATHS),
+    site_name:
+      pickString(alarm, ALARM_SITE_NAME_PATHS) ??
+      pickString(rawAlarmData, ALARM_SITE_NAME_PATHS),
+    alarm_code:
+      pickString(alarm, ALARM_CODE_PATHS) ??
+      pickString(rawAlarmData, ALARM_CODE_PATHS),
+    processing_status:
+      pickString(alarm, ALARM_PROCESSING_STATUS_PATHS) ??
+      pickString(rawAlarmData, ALARM_PROCESSING_STATUS_PATHS),
+    created_at:
+      pickString(alarm, ALARM_CREATED_AT_PATHS) ??
+      pickString(rawAlarmData, ALARM_CREATED_AT_PATHS),
     raw: { ...alarm },
   };
 };
 
 const formatAlarmField = (value: string | number | null): string => {
-  if (value === null || value === undefined || value === '') {
-    return '未知';
+  if (value === null || value === undefined || value === "") {
+    return "未知";
   }
 
   return String(value);
@@ -350,7 +503,7 @@ const formatAlarmField = (value: string | number | null): string => {
 
 const buildAlarmSummaryMarkdown = (alarms: NormalizedAlarmRecord[]): string => {
   if (alarms.length === 0) {
-    return '### 告警列表\n\n当前没有查询到符合条件的告警。';
+    return "### 告警列表\n\n当前没有查询到符合条件的告警。";
   }
 
   const alarmLines = alarms.map((alarm, index) => {
@@ -361,10 +514,10 @@ const buildAlarmSummaryMarkdown = (alarms: NormalizedAlarmRecord[]): string => {
       `告警代码: ${formatAlarmField(alarm.alarm_code)}`,
       `处理状态: ${formatAlarmField(alarm.processing_status)}`,
       `发生时间: ${formatAlarmField(alarm.created_at)}`,
-    ].join(' | ');
+    ].join(" | ");
   });
 
-  return `### 告警列表\n\n${alarmLines.join('\n')}`;
+  return `### 告警列表\n\n${alarmLines.join("\n")}`;
 };
 
 const normalizeListAlarmsResponse = (
@@ -375,30 +528,33 @@ const normalizeListAlarmsResponse = (
 
   return {
     success: true,
-    total: pickNumber(payload, [
-      ['total'],
-      ['count'],
-      ['total_count'],
-      ['data', 'total'],
-      ['data', 'count'],
-      ['result', 'total'],
-      ['result', 'count'],
-    ]) ?? alarms.length,
-    page: pickNumber(payload, [
-      ['page'],
-      ['current_page'],
-      ['data', 'page'],
-      ['data', 'current_page'],
-      ['result', 'page'],
-    ]) ?? input.page,
-    page_size: pickNumber(payload, [
-      ['page_size'],
-      ['pageSize'],
-      ['data', 'page_size'],
-      ['data', 'pageSize'],
-      ['result', 'page_size'],
-      ['result', 'pageSize'],
-    ]) ?? input.page_size,
+    total:
+      pickNumber(payload, [
+        ["total"],
+        ["count"],
+        ["total_count"],
+        ["data", "total"],
+        ["data", "count"],
+        ["result", "total"],
+        ["result", "count"],
+      ]) ?? alarms.length,
+    page:
+      pickNumber(payload, [
+        ["page"],
+        ["current_page"],
+        ["data", "page"],
+        ["data", "current_page"],
+        ["result", "page"],
+      ]) ?? input.page,
+    page_size:
+      pickNumber(payload, [
+        ["page_size"],
+        ["pageSize"],
+        ["data", "page_size"],
+        ["data", "pageSize"],
+        ["result", "page_size"],
+        ["result", "pageSize"],
+      ]) ?? input.page_size,
     alarms,
     alarm_summary_markdown: buildAlarmSummaryMarkdown(alarms),
     raw: payload,
@@ -408,7 +564,7 @@ const normalizeListAlarmsResponse = (
 const buildToolFailure = (
   errorType: AlarmToolFailureType,
   message: string,
-  extra: Omit<AlarmToolFailure, 'error_type' | 'message' | 'success'> = {},
+  extra: Omit<AlarmToolFailure, "error_type" | "message" | "success"> = {},
 ): AlarmToolFailure => {
   return {
     success: false,
@@ -419,9 +575,9 @@ const buildToolFailure = (
 };
 
 const isAlarmToolFailure = (
-  value: AnalyzeAlarmInput | AlarmToolFailure,
+  value: AnalyzeAlarmInput | AnalyzeAlarmToolInput | AlarmToolFailure,
 ): value is AlarmToolFailure => {
-  return 'success' in value && value.success === false;
+  return "success" in value && value.success === false;
 };
 
 const normalizeListAlarmsInput = (
@@ -445,21 +601,31 @@ const normalizeAnalyzeAlarmInput = (
 
   if (!sessionId) {
     return buildToolFailure(
-      'invalid_tool_input',
-      'session_id must be a non-empty string.',
+      "invalid_tool_input",
+      "session_id must be a non-empty string.",
     );
   }
 
   if (Object.keys(alarm).length === 0) {
     return buildToolFailure(
-      'invalid_tool_input',
-      'alarm must be a non-empty object.',
+      "invalid_tool_input",
+      "alarm must be a non-empty object.",
     );
+  }
+
+  const processAlarmRecord = buildProcessAlarmRecord(alarm);
+
+  if ("error" in processAlarmRecord) {
+    return buildToolFailure("invalid_tool_input", processAlarmRecord.error, {
+      raw: {
+        alarm: sanitizeAlarmEnvelope(alarm),
+      },
+    });
   }
 
   return {
     session_id: sessionId,
-    alarm,
+    alarms: [processAlarmRecord.alarm],
     mode: normalizeString(input.mode) ?? DEFAULT_ANALYZE_MODE,
     business_type:
       normalizeString(input.business_type) ?? DEFAULT_ANALYZE_BUSINESS_TYPE,
@@ -469,36 +635,36 @@ const normalizeAnalyzeAlarmInput = (
 };
 
 const ANALYSIS_TEXT_KEYS = new Set([
-  'analysis',
-  'analysis_markdown',
-  'analysismarkdown',
-  'answer',
-  'content',
-  'final',
-  'final_answer',
-  'final_markdown',
-  'markdown',
-  'message',
-  'output',
-  'output_text',
-  'summary',
-  'text',
+  "analysis",
+  "analysis_markdown",
+  "analysismarkdown",
+  "answer",
+  "content",
+  "final",
+  "final_answer",
+  "final_markdown",
+  "markdown",
+  "message",
+  "output",
+  "output_text",
+  "summary",
+  "text",
 ]);
 
 const ANALYSIS_IGNORE_KEYS = new Set([
-  'code',
-  'event',
-  'id',
-  'index',
-  'language',
-  'mode',
-  'processing_status',
-  'retry',
-  'session_id',
-  'sessionid',
-  'status',
-  'success',
-  'type',
+  "code",
+  "event",
+  "id",
+  "index",
+  "language",
+  "mode",
+  "processing_status",
+  "retry",
+  "session_id",
+  "sessionid",
+  "status",
+  "success",
+  "type",
 ]);
 
 const normalizeAnalysisKey = (key: string): string => {
@@ -514,10 +680,10 @@ const collectAnalysisTextPieces = (
     return [];
   }
 
-  if (typeof value === 'string') {
+  if (typeof value === "string") {
     const normalizedValue = value.trim();
 
-    if (!normalizedValue || normalizedValue === '[DONE]') {
+    if (!normalizedValue || normalizedValue === "[DONE]") {
       return [];
     }
 
@@ -563,8 +729,8 @@ const collectAnalysisTextPieces = (
 
 const cleanAnalysisMarkdown = (value: string): string => {
   return value
-    .replace(/\[DONE\]/g, '')
-    .split('\n')
+    .replace(/\[DONE\]/g, "")
+    .split("\n")
     .map((line) => line.trimEnd())
     .filter((line) => {
       const normalizedLine = line.trim();
@@ -583,8 +749,8 @@ const cleanAnalysisMarkdown = (value: string): string => {
 
       return true;
     })
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 };
 
@@ -628,9 +794,9 @@ const dedupePieces = (pieces: string[]): string[] => {
 const buildAnalysisMarkdown = (events: AlarmSseEvent[]): string => {
   const pieces = dedupePieces(
     events.flatMap((event) => {
-      if (typeof event.data === 'string') {
+      if (typeof event.data === "string") {
         const normalizedData = event.data.trim();
-        return normalizedData && normalizedData !== '[DONE]'
+        return normalizedData && normalizedData !== "[DONE]"
           ? [normalizedData]
           : [];
       }
@@ -640,14 +806,14 @@ const buildAnalysisMarkdown = (events: AlarmSseEvent[]): string => {
   );
 
   if (pieces.length === 0) {
-    return '';
+    return "";
   }
 
-  const mergedText = pieces.join('\n\n');
-  const lastPiece = pieces[pieces.length - 1] ?? '';
+  const mergedText = pieces.join("\n\n");
+  const lastPiece = pieces[pieces.length - 1] ?? "";
   const longestPiece = pieces.reduce((currentLongest, piece) => {
     return piece.length > currentLongest.length ? piece : currentLongest;
-  }, '');
+  }, "");
 
   const candidate =
     (lastPiece.length >= longestPiece.length && lastPiece.length >= 80
@@ -664,7 +830,9 @@ const detectDispatchRecommendation = (
 ): boolean | null => {
   const normalizedText = analysisMarkdown.toLowerCase();
   const positiveMatch =
-    /派单|建单|工单|dispatch|work order|create work order/u.test(normalizedText);
+    /派单|建单|工单|dispatch|work order|create work order/u.test(
+      normalizedText,
+    );
   const negativeMatch =
     /无需派单|暂不派单|无需建单|暂不建单|无需工单|不建议派单|no dispatch|no work order/u.test(
       normalizedText,
@@ -682,19 +850,19 @@ const detectDispatchRecommendation = (
 };
 
 const mapAlarmToolError = (
-  operation: 'session' | 'list' | 'analysis',
+  operation: "session" | "list" | "analysis",
   error: unknown,
 ): AlarmToolFailure => {
   const errorType =
-    operation === 'session'
-      ? 'alarm_session_failed'
-      : operation === 'list'
-        ? 'alarm_list_failed'
-        : 'alarm_analysis_failed';
+    operation === "session"
+      ? "alarm_session_failed"
+      : operation === "list"
+        ? "alarm_list_failed"
+        : "alarm_analysis_failed";
 
   if (error instanceof AlarmAgentClientError) {
     const partialAnalysis =
-      operation === 'analysis' && Array.isArray(error.partialEvents)
+      operation === "analysis" && Array.isArray(error.partialEvents)
         ? buildAnalysisMarkdown(error.partialEvents)
         : undefined;
 
@@ -711,7 +879,7 @@ const mapAlarmToolError = (
 
   return buildToolFailure(
     errorType,
-    error instanceof Error ? error.message : 'Unknown alarm tool error.',
+    error instanceof Error ? error.message : "Unknown alarm tool error.",
   );
 };
 
@@ -724,8 +892,8 @@ const createCreateAlarmSessionTool = (client: AlarmAgentClient) => {
 
         if (!sessionId) {
           return buildToolFailure(
-            'alarm_session_failed',
-            'Alarm backend returned no session_id.',
+            "alarm_session_failed",
+            "Alarm backend returned no session_id.",
             { raw: payload },
           );
         }
@@ -736,18 +904,18 @@ const createCreateAlarmSessionTool = (client: AlarmAgentClient) => {
           raw: payload,
         };
       } catch (error) {
-        alarmToolLogger.warn('create_alarm_session failed', {
+        alarmToolLogger.warn("create_alarm_session failed", {
           errorType:
-            error instanceof AlarmAgentClientError ? error.type : 'UNKNOWN',
+            error instanceof AlarmAgentClientError ? error.type : "UNKNOWN",
         });
 
-        return mapAlarmToolError('session', error);
+        return mapAlarmToolError("session", error);
       }
     },
     {
       name: CREATE_ALARM_SESSION_TOOL_NAME,
       description:
-        '创建一次告警分析会话。分析具体告警前，如果还没有 session_id，先调用这个工具。',
+        "创建一次告警分析会话。分析具体告警前，如果还没有 session_id，先调用这个工具。",
       schema: CREATE_ALARM_SESSION_SCHEMA,
     },
   );
@@ -755,28 +923,31 @@ const createCreateAlarmSessionTool = (client: AlarmAgentClient) => {
 
 const createListAlarmsTool = (client: AlarmAgentClient) => {
   return tool(
-    async (input: Record<string, unknown>): Promise<ListAlarmsSuccess | AlarmToolFailure> => {
+    async (
+      input: Record<string, unknown>,
+    ): Promise<ListAlarmsSuccess | AlarmToolFailure> => {
       const normalizedInput = normalizeListAlarmsInput(input);
 
       try {
         const payload = await client.listAlarms(normalizedInput);
         return normalizeListAlarmsResponse(payload, normalizedInput);
       } catch (error) {
-        alarmToolLogger.warn('list_alarms failed', {
+        alarmToolLogger.warn("list_alarms failed", {
           errorType:
-            error instanceof AlarmAgentClientError ? error.type : 'UNKNOWN',
+            error instanceof AlarmAgentClientError ? error.type : "UNKNOWN",
         });
 
-        return mapAlarmToolError('list', error);
+        return mapAlarmToolError("list", error);
       }
     },
     {
       name: LIST_ALARMS_TOOL_NAME,
       description: [
-        '查询当前告警列表，默认 `status` 传空字符串，不做状态过滤。',
+        "查询当前告警列表，默认 `status` 传空字符串，不做状态过滤。",
         '当用户明确要求查看未处理告警时，请显式传入 `status="Untreated"`。',
-        '当用户想查看当前告警、未处理告警或候选告警列表时，使用这个工具。',
-      ].join(' '),
+        '当用户明确要求查看处理中的告警时，请显式传入 `status="Processing"`。',
+        "当用户想查看当前告警、未处理告警或候选告警列表时，使用这个工具。",
+      ].join(" "),
       schema: LIST_ALARMS_SCHEMA,
     },
   );
@@ -784,7 +955,9 @@ const createListAlarmsTool = (client: AlarmAgentClient) => {
 
 const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
   return tool(
-    async (input: Record<string, unknown>): Promise<AnalyzeAlarmSuccess | AlarmToolFailure> => {
+    async (
+      input: Record<string, unknown>,
+    ): Promise<AnalyzeAlarmSuccess | AlarmToolFailure> => {
       const normalizedInput = normalizeAnalyzeAlarmInput(input);
 
       if (isAlarmToolFailure(normalizedInput)) {
@@ -797,8 +970,8 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
 
         if (!analysisMarkdown) {
           return buildToolFailure(
-            'alarm_analysis_failed',
-            'Alarm analysis stream completed without usable analysis content.',
+            "alarm_analysis_failed",
+            "Alarm analysis stream completed without usable analysis content.",
             {
               raw_events: streamResult.events,
             },
@@ -815,23 +988,24 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
           raw_events: streamResult.events,
           should_offer_dispatch: shouldOfferDispatch,
           recommended_action_hint:
-            shouldOfferDispatch === true ? 'create_work_order' : null,
+            shouldOfferDispatch === true ? "create_work_order" : null,
         };
       } catch (error) {
-        alarmToolLogger.warn('analyze_alarm failed', {
+        alarmToolLogger.warn("analyze_alarm failed", {
           errorType:
-            error instanceof AlarmAgentClientError ? error.type : 'UNKNOWN',
+            error instanceof AlarmAgentClientError ? error.type : "UNKNOWN",
         });
 
-        return mapAlarmToolError('analysis', error);
+        return mapAlarmToolError("analysis", error);
       }
     },
     {
       name: ANALYZE_ALARM_TOOL_NAME,
       description: [
-        '分析指定告警并返回结构化 analysis_markdown。',
-        '这个工具会消费告警后端的 SSE 响应，不会把原始 SSE 文本直接暴露给 Agent。',
-      ].join(' '),
+        "分析指定告警并返回结构化 analysis_markdown。",
+        "调用 /api/v1/process_alarms 时，会优先从告警对象里的 raw_data 解析原始告警并填入 alarms 数组，同时确保 id 不为空。",
+        "这个工具会消费告警后端的 SSE 响应，不会把原始 SSE 文本直接暴露给 Agent。",
+      ].join(" "),
       schema: ANALYZE_ALARM_SCHEMA,
     },
   );

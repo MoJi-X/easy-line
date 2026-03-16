@@ -53,6 +53,7 @@ const createAlarmVerificationServer = (): Promise<{
     page_size: string | null;
     status: string | null;
   } | null;
+  getLastProcessRequest: () => unknown;
   server: Server;
 }> => {
   let lastListRequest: {
@@ -60,6 +61,7 @@ const createAlarmVerificationServer = (): Promise<{
     page_size: string | null;
     status: string | null;
   } | null = null;
+  let lastProcessRequest: unknown;
 
   const server = createServer((req, res) => {
     void (async () => {
@@ -93,6 +95,14 @@ const createAlarmVerificationServer = (): Promise<{
               alarm_code: '130',
               processingStatus: 'Untreated',
               createdAt: '2026-03-16 09:20:00',
+              raw_data: JSON.stringify({
+                deviceSn: 'INV-201',
+                deviceType: 'inverter',
+                siteName: 'Bangkok PV Site',
+                alarmType: 'Offline',
+                alarmTypeName: 'Device Offline',
+                alarm_code: '130',
+              }),
             },
           ],
         });
@@ -100,6 +110,7 @@ const createAlarmVerificationServer = (): Promise<{
       }
 
       if (req.method === 'POST' && requestUrl.pathname === '/api/v1/process_alarms') {
+        lastProcessRequest = await readJsonBody(req);
         res.writeHead(200, {
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
@@ -138,6 +149,7 @@ const createAlarmVerificationServer = (): Promise<{
         server,
         baseUrl: `http://127.0.0.1:${address.port}`,
         getLastListRequest: () => lastListRequest,
+        getLastProcessRequest: () => lastProcessRequest,
       });
     });
   });
@@ -294,6 +306,7 @@ const verify = async (): Promise<void> => {
     server: alarmServer,
     baseUrl: alarmBaseUrl,
     getLastListRequest,
+    getLastProcessRequest,
   } =
     await createAlarmVerificationServer();
   const {
@@ -429,6 +442,24 @@ const verify = async (): Promise<void> => {
       'create_alarm_session',
       'analyze_alarm',
     ]);
+    assert.deepEqual(getLastProcessRequest(), {
+      session_id: 'session-workorder-123',
+      alarms: [
+        {
+          id: 201,
+          deviceSn: 'INV-201',
+          deviceType: 'inverter',
+          siteName: 'Bangkok PV Site',
+          alarmType: 'Offline',
+          alarmTypeName: 'Device Offline',
+          alarm_code: '130',
+        },
+      ],
+      mode: 'standard',
+      business_type: 'device_alarm',
+      force_reanalyze: false,
+      language: 'zh',
+    });
     assert.match(analyzeResult.reply, /是否需要为这条告警创建工单/u);
 
     const confirmResult = await liveService.processUserMessage({

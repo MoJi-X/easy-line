@@ -43,7 +43,7 @@
 - inputs：07 文档 4.1 的 Tool 3、5.2、6.1、7.3、8、9.2、10.1、14。
 - outputs：`analyze_alarm` Tool、SSE 聚合器、`analysis_markdown`/`raw_events`/`should_offer_dispatch` 字段约定。
 - dependencies：ALARM-001。
-- implementation notes：Tool 层负责消费 SSE、拼接最终 Markdown、保留原始事件数组；不把原始 SSE 直接暴露给 Agent；`should_offer_dispatch` 只做保守提示，无法稳定判断时返回 `null` 而不是误导性布尔值；流式中断时返回 `partial_analysis`。
+- implementation notes：Tool 层负责消费 SSE、拼接最终 Markdown、保留原始事件数组；不把原始 SSE 直接暴露给 Agent；`should_offer_dispatch` 只做保守提示，无法稳定判断时返回 `null` 而不是误导性布尔值；流式中断时返回 `partial_analysis`；调用 `POST /api/v1/process_alarms` 时，请求体必须使用 `alarms` 数组而不是单个 `alarm` 字段，数组元素优先从 `/api/v1/alarms` 返回的 `raw_data` 解析生成，并在 `raw_data.id` 缺失时回填顶层告警 `id`，保证传给后端的 `id` 非空。
 - acceptance criteria：Agent 可稳定拿到分析文本；SSE 中断时有清晰错误结构；原始事件和最终结论都能被保留用于排障。
 
 ### ALARM-004 辅助 Tool 与错误模型补齐
@@ -65,8 +65,9 @@
 - decision: SSE 在 Client 层只负责读取并解析事件，不拼装最终分析结论；`analysis_markdown`、`should_offer_dispatch` 和 `partial_analysis` 统一在 Tool 层生成，避免把原始 SSE 文本直接暴露给 Agent。
 - decision: `list_alarms` 的 `status` 默认值改为空字符串，表示不过滤；需要“未处理告警”时由上游显式传 `Untreated`，避免把状态过滤隐式耦合在 Tool 默认值里。
 - decision: `list_alarms` 在结构化 `alarms` 数组之外补充 `alarm_summary_markdown`，用于给 Agent 提供稳定、编号化的可读列表，同时保留 `raw` 备用。
+- decision: `analyze_alarm` 的 Tool 入参仍保持单个候选告警对象，便于 Agent 从最近一次 `list_alarms` 结果中直接选中目标；但下游调用 `/api/v1/process_alarms` 时统一转换成 `alarms` 数组，并优先使用列表响应中的 `raw_data` 作为原始告警载荷来源。
 - deferred: `ALARM-004`、告警状态机、人机确认节点、工单创建与 Dify 联调继续延期到 `specs/26-alarm-agent-workflow.spec.md` 和 `specs/27-workorder-dispatch.spec.md`，本轮不实现。
-- validation: 新增 `src/scripts/verify-alarm-tools.ts`，通过本地 mock HTTP/SSE 服务验证 `create_alarm_session -> list_alarms -> analyze_alarm` 主链路，以及 SSE 中断时的 `partial_analysis` 降级结果。
+- validation: 新增 `src/scripts/verify-alarm-tools.ts`，通过本地 mock HTTP/SSE 服务验证 `create_alarm_session -> list_alarms -> analyze_alarm` 主链路、`raw_data -> alarms[0]` 的映射与 `id` 回填逻辑，以及 SSE 中断时的 `partial_analysis` 降级结果。
 
 ## 风险与回退
 - 风险：SSE 事件格式不稳定时，分析结论提取会受到影响。
