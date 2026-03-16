@@ -65,6 +65,12 @@
 - 风险：自然语言任务请求不完整时，如果追问策略不清会导致工具误创建任务。
 - 回退：若自然语言链路阻塞，先保留 `/task` 命令和 `/api/tasks` CRUD，保证任务模型与持久化闭环可验证。
 
+## 本轮实现记录
+- scope：完成 `TASK-001`、`TASK-002`，并补到 `TASK-003` 的任务工具与确定性 `/task` 命令语义；未实现自然语言任务补全与 scheduler reload。
+- decision：`/api/tasks` 与 `/task` 命令共用同一个 `TaskRepository`；`src/config/tasks.json` 已切换为 `daily_weather` 任务集合；本轮启动流程不再自动启动天气 Scheduler，避免旧版调度配置与新任务模型冲突。
+- deferred：天气 API 调用、定时执行、手动 `/api/tasks/:taskId/execute`、自然语言任务意图映射与 scheduler reload 延后到 `specs/35-weather-scheduler-lifecycle.spec.md` 及后续切片。
+- validation：执行 `npm run build`、`npm run verify:agent`、`npm run verify:tasks`，覆盖编译、现有 Tavily Agent 链路，以及任务仓储/API CRUD/`/task` 命令语义。
+
 ## 当前实现基线
-- 当前代码已有静态 `tasks.json`、任务查询和手动执行的最小接口，但尚未支持完整 CRUD、所有权与 JSON 写回。
-- 下一步需要把“静态配置读取”升级为“仓储读写 + Agent 工具 + 当前用户范围控制”。
+- 当前代码已具备 `daily_weather` 任务模型、`TaskRepository`、当前用户范围内的 `GET/POST/PATCH/DELETE /api/tasks`、`src/config/tasks.json` 全量写回，以及 `/task create|list|update|delete` 的确定性语义。
+- 下一步进入 `specs/35-weather-scheduler-lifecycle.spec.md`，补 scheduler 读取新任务模型、刷新契约、手动执行和天气推送链路。

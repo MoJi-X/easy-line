@@ -15,6 +15,9 @@ export interface AppConfig {
   llmBaseUrl?: string;
   llmModel: string;
   port: number;
+  tavilyApiBaseUrl?: string;
+  tavilyApiKey?: string;
+  tavilySearchTimeoutMs: number;
 }
 
 const REQUIRED_KEYS: RequiredConfigKey[] = [
@@ -70,6 +73,44 @@ const parseLlmBaseUrl = (): string | undefined => {
   }
 };
 
+const parseOptionalUrl = (key: string): string | undefined => {
+  const value = getOptionalEnv(key);
+
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    new URL(value);
+    return value;
+  } catch {
+    throw new Error(`Invalid ${key}. Please provide a valid URL.`);
+  }
+};
+
+const parsePositiveIntegerEnv = (
+  key: string,
+  defaultValue: number,
+): number => {
+  const rawValue = getOptionalEnv(key);
+
+  if (!rawValue) {
+    return defaultValue;
+  }
+
+  const parsedValue = Number(rawValue);
+
+  if (
+    Number.isNaN(parsedValue) ||
+    parsedValue <= 0 ||
+    !Number.isInteger(parsedValue)
+  ) {
+    throw new Error(`Invalid ${key}. Please provide a positive integer.`);
+  }
+
+  return parsedValue;
+};
+
 const missingKeys = getMissingKeys();
 
 if (missingKeys.length > 0) {
@@ -85,4 +126,7 @@ export const config: AppConfig = {
   llmBaseUrl: parseLlmBaseUrl(),
   llmModel: getOptionalEnv("LLM_MODEL") ?? DEFAULT_LLM_MODEL,
   port: parsePort(),
+  tavilyApiBaseUrl: parseOptionalUrl("TAVILY_API_BASE_URL"),
+  tavilyApiKey: getOptionalEnv("TAVILY_API_KEY"),
+  tavilySearchTimeoutMs: parsePositiveIntegerEnv("TAVILY_SEARCH_TIMEOUT_MS", 5000),
 };

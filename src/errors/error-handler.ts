@@ -33,6 +33,7 @@ export const errorHandler = (error: unknown, req: Request, res: Response, _next:
     res.status(error.statusCode).json({
       code: error.code,
       message: error.message,
+      errors: error.details,
       data: null,
     });
     return;

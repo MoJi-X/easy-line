@@ -9,6 +9,11 @@ import { createAgent } from 'langchain';
 
 import { config } from '../config';
 import { AppError } from '../errors/app-error';
+import {
+  createToolRegistry,
+  type AgentTool,
+  type ToolRegistry,
+} from '../tools';
 import { createAppLogger } from '../utils/app-logger';
 import { maskUserId } from '../utils/logger';
 
@@ -21,9 +26,10 @@ const agentLogger = createAppLogger('agent');
 const AGENT_SYSTEM_PROMPT = [
   '你是 easy-line Demo 的统一消息 Agent。',
   '请优先使用简洁、自然的中文回复用户。',
-  '当前仅启用了统一 Agent 入口和按 userId 维护的短期上下文。',
-  'Tavily 搜索、任务工具、天气调度和 JSON 持久化尚未接入，不要假装已经执行这些能力。',
-  '如果用户请求尚未接入的能力，请明确说明当前阶段暂不支持，并引导用户稍后再试。',
+  '当问题依赖最新、当前、实时、今天、本周、近期变化的外部信息时，优先调用 `search.tavily` 再回答。',
+  '如果 `search.tavily` 返回搜索不可用、超时或未配置，请直接告诉用户当前无法获取最新外部信息，不要编造答案。',
+  '当前仅支持确定性的 `/task` 命令来管理天气任务；自然语言任务管理、天气调度与自动执行尚未接入。',
+  '对于不需要实时外部信息的稳定问题，可以直接回答。',
 ].join('\n');
 
 export type AgentChannel = 'line_webhook' | 'chat_api';
@@ -58,6 +64,8 @@ export type AgentRuntime = {
   invoke: (state: { messages: BaseMessage[] }) => Promise<AgentRuntimeResult>;
 };
 
+type AgentTools = AgentTool[];
+
 type AgentServiceErrorType =
   | 'INVALID_ARGUMENT'
   | 'MISSING_API_KEY'
@@ -65,8 +73,9 @@ type AgentServiceErrorType =
   | 'AGENT_INVOCATION_FAILED';
 
 interface AgentServiceOptions {
-  createRuntimeAgent?: () => AgentRuntime;
+  createRuntimeAgent?: (tools: AgentTools) => AgentRuntime;
   memoryStore?: AgentConversationMemory;
+  toolRegistry?: ToolRegistry<AgentTool>;
 }
 
 export class AgentServiceError extends Error {
@@ -228,17 +237,19 @@ const createChatModel = (): LanguageModelLike => {
   });
 };
 
-const createRuntimeAgent = (): AgentRuntime => {
+const createRuntimeAgent = (
+  tools: AgentTools,
+): AgentRuntime => {
   try {
     const createRuntime = createAgent as unknown as (params: {
       model: LanguageModelLike;
-      tools: [];
+      tools: AgentTools;
       systemPrompt: string;
     }) => AgentRuntime;
 
     return createRuntime({
       model: createChatModel(),
-      tools: [],
+      tools,
       systemPrompt: AGENT_SYSTEM_PROMPT,
     });
   } catch (error) {
@@ -279,10 +290,13 @@ export class AgentService {
 
   private readonly memoryStore: AgentConversationMemory;
 
-  private readonly createRuntimeAgent: () => AgentRuntime;
+  private readonly createRuntimeAgent: (tools: AgentTools) => AgentRuntime;
+
+  private readonly toolRegistry: ToolRegistry<AgentTool>;
 
   constructor(options: AgentServiceOptions = {}) {
     this.memoryStore = options.memoryStore ?? new AgentConversationMemory();
+    this.toolRegistry = options.toolRegistry ?? createToolRegistry();
     this.createRuntimeAgent = options.createRuntimeAgent ?? createRuntimeAgent;
   }
 
@@ -290,9 +304,13 @@ export class AgentService {
     return this.memoryStore.getUserContext(userId);
   }
 
+  getRegisteredToolNames(): string[] {
+    return this.toolRegistry.getNames();
+  }
+
   private getOrCreateRuntimeAgent(): AgentRuntime {
     if (!this.runtimeAgent) {
-      this.runtimeAgent = this.createRuntimeAgent();
+      this.runtimeAgent = this.createRuntimeAgent(this.toolRegistry.getAll());
     }
 
     return this.runtimeAgent;
@@ -315,6 +333,7 @@ export class AgentService {
       messageId: normalizedInput.messageId,
       historyMessageCount: history.length,
       requestMessageCount: requestMessages.length,
+      registeredToolCount: this.toolRegistry.getNames().length,
     });
 
     try {

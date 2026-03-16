@@ -1,17 +1,16 @@
 {
   "tasks": [
     {
-      "id": "weather-daily",
-      "name": "每日天气推送",
+      "id": "weather-seed-001",
+      "type": "daily_weather",
+      "name": "台北天气提醒",
+      "ownerUserId": "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "city": "台北",
+      "dailyTime": "08:00",
       "enabled": false,
-      "schedule": "0 8 * * *",
-      "api": {
-        "url": "https://api.open-meteo.com/v1/forecast?latitude=25.03&longitude=121.56&current=temperature_2m",
-        "method": "GET",
-        "timeoutMs": 5000
-      },
-      "template": "台北目前温度：{current.temperature_2m}°C",
-      "targets": ["Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]
+      "source": "api_seed",
+      "createdAt": "2026-03-16T08:00:00.000Z",
+      "updatedAt": "2026-03-16T08:00:00.000Z"
     }
   ]
 }

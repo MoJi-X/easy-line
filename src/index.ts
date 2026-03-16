@@ -9,7 +9,6 @@ type ShutdownReason = NodeJS.Signals | 'uncaughtException' | 'bootstrapFailure';
 
 let server: Server | null = null;
 let isShuttingDown = false;
-let schedulerService: import('./services/scheduler').SchedulerService | null = null;
 
 const shutdown = (reason: ShutdownReason, exitCode = 0): void => {
   if (isShuttingDown) {
@@ -18,10 +17,6 @@ const shutdown = (reason: ShutdownReason, exitCode = 0): void => {
 
   isShuttingDown = true;
   appLogger.info('application shutdown started', { reason, exitCode });
-
-  if (schedulerService) {
-    schedulerService.stop();
-  }
 
   if (!server) {
     process.exit(exitCode);
@@ -60,10 +55,6 @@ const bootstrap = (): void => {
     const chatRouter = (require('./routes/chat') as typeof import('./routes/chat')).default;
     const taskRouter = (require('./routes/tasks') as typeof import('./routes/tasks')).default;
 
-    schedulerService = (
-      require('./services/scheduler') as typeof import('./services/scheduler')
-    ).schedulerService;
-
     const app = express();
 
     app.get('/health', (_req: Request, res: Response) => {
@@ -77,8 +68,6 @@ const bootstrap = (): void => {
 
     app.use(notFoundHandler);
     app.use(errorHandler);
-
-    schedulerService.start();
 
     server = app.listen(config.port, () => {
       appLogger.info('server started', { port: config.port });
