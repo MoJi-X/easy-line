@@ -20,6 +20,8 @@
 | `langchain` | hard | 使用官方 `createAgent()` 统一入口 |
 | `@langchain/openai` | hard | 提供 OpenAI-compatible 模型接入 |
 | `@langchain/tavily` | hard | 提供实时搜索工具 |
+| `specs/25-alarm-integration-tools.spec.md` | downstream | 告警域 Tool 基于本 spec 的 Tool Registry 扩展 |
+| `specs/26-alarm-agent-workflow.spec.md` | downstream | 告警工作流状态机基于本 spec 的会话容器扩展 |
 | `specs/30-task-crud-persistence.spec.md` | soft | 任务工具最终由任务模块注入 Tool Registry |
 
 ## 任务拆分
@@ -38,7 +40,7 @@
 - inputs：需求文档 3.2.2、3.2.5、4.1；数据库文档 2.1；架构文档 4.1。
 - outputs：上下文内存管理逻辑、消息标准化层。
 - dependencies：AGT-001。
-- implementation notes：使用 `Map<string, BaseMessage[]>` 保存最近 3 轮消息；对 Webhook 和 `/chat` 输入统一归一化；Slash Command 仍作为普通文本进入 Agent，但要保留命令原文以便下游任务工具判断。
+- implementation notes：最小实现可先使用 `Map<string, BaseMessage[]>` 保存最近 3 轮消息；当后续告警工作流进入时，允许升级为按 `userId` 存放“消息 + 业务状态”的会话容器，但消息裁剪规则仍固定为最近 3 轮；对 Webhook 和 `/chat` 输入统一归一化；Slash Command 仍作为普通文本进入 Agent，但要保留命令原文以便下游任务工具判断。
 - acceptance criteria：不同用户上下文互不污染；同一用户最多保留最近 3 轮；`/chat` 与 LINE 文本消息共享同一上下文和处理逻辑。
 
 ### AGT-003 Tool Registry 与 Tavily 搜索工具
@@ -54,7 +56,7 @@
 - inputs：需求文档 3.1.1、5.2、8.1、8.2；API 文档 3.1。
 - outputs：`src/routes/chat.ts`、请求体验证、错误到响应结构的映射。
 - dependencies：AGT-001、AGT-002、AGT-003。
-- implementation notes：请求体固定为 `userId` 和 `message`；成功时返回 `code/message/data`；失败时返回统一错误结构；不得绕过 Agent 或单独调用旧的 `LLMService.chat()`。
+- implementation notes：基础请求体固定为 `userId` 和 `message`；后续如需承载告警建单链路，可在不破坏现有兼容性的前提下增加可选 `context` 字段；成功时返回 `code/message/data`；失败时返回统一错误结构；不得绕过 Agent 或单独调用旧的 `LLMService.chat()`。
 - acceptance criteria：`/chat` 与 LINE 文本消息的工具调用和降级行为一致；参数错误与外部服务错误都返回稳定 JSON。
 
 ## 验收与测试
@@ -76,4 +78,4 @@
 ## 当前实现基线
 - 已完成统一 `AgentService`，`/webhook` 与 `/chat` 复用同一个 `processUserMessage()` 入口。
 - 已按 `userId` 落地最近 3 轮上下文内存，旧的“直接 LLM 主链路”不再作为正式路径保留。
-- 下一步进入 `AGT-003`，补 Tool Registry 与 Tavily 搜索工具接入。
+- 下一步进入 `AGT-003`，补 Tool Registry 与 Tavily 搜索工具接入；告警域 Tool 与状态机扩展将分别由 `specs/25-alarm-integration-tools.spec.md` 和 `specs/26-alarm-agent-workflow.spec.md` 承接。
