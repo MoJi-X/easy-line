@@ -1,9 +1,12 @@
 import { AppError } from '../errors/app-error';
+import { createAppLogger } from '../utils/app-logger';
 import {
   taskRepository as defaultTaskRepository,
   type DailyWeatherTask,
   type TaskRepository,
 } from '../services/task-repository';
+
+const taskToolLogger = createAppLogger('task-tools');
 
 interface TaskToolDependencies {
   taskRepository?: TaskRepository;
@@ -137,13 +140,24 @@ export const tryHandleTaskCommand = (
   input: TaskCommandInput,
   dependencies: TaskToolDependencies = {},
 ): TaskCommandResult | null => {
+  const startedAt = Date.now();
   const parsedCommand = parseTaskCommand(input.message);
 
   if (!parsedCommand) {
     return null;
   }
 
+  taskToolLogger.debug('task command input', {
+    action: parsedCommand.action,
+    userId: input.userId,
+    hasArgs: !parsedCommand.args.__invalid__,
+  });
+
   if (parsedCommand.args.__invalid__) {
+    taskToolLogger.warn('task command invalid', {
+      action: parsedCommand.action,
+      durationMs: Date.now() - startedAt,
+    });
     return buildUsageReply('命令格式无效。');
   }
 
@@ -156,6 +170,11 @@ export const tryHandleTaskCommand = (
       }
 
       const tasks = taskRepository.listTasksByOwner(input.userId);
+
+      taskToolLogger.debug('task list output', {
+        taskCount: tasks.length,
+        durationMs: Date.now() - startedAt,
+      });
 
       return {
         reply: buildTaskListReply(tasks),
@@ -192,12 +211,25 @@ export const tryHandleTaskCommand = (
           source: 'slash_command',
         });
 
+        taskToolLogger.debug('task create output', {
+          taskId: task.id,
+          city: task.city,
+          dailyTime: task.dailyTime,
+          durationMs: Date.now() - startedAt,
+        });
+
         return {
           reply: buildTaskCreatedReply(task),
           usedTools: ['task.create'],
         };
       } catch (error) {
         if (error instanceof AppError) {
+          taskToolLogger.warn('task create failed', {
+            city,
+            dailyTime,
+            durationMs: Date.now() - startedAt,
+            errorMessage: error.message,
+          });
           return handleAppError(error, 'task.create');
         }
 
@@ -242,12 +274,22 @@ export const tryHandleTaskCommand = (
           enabled,
         });
 
+        taskToolLogger.debug('task update output', {
+          taskId: task.id,
+          durationMs: Date.now() - startedAt,
+        });
+
         return {
           reply: buildTaskUpdatedReply(task),
           usedTools: ['task.update'],
         };
       } catch (error) {
         if (error instanceof AppError) {
+          taskToolLogger.warn('task update failed', {
+            taskId,
+            durationMs: Date.now() - startedAt,
+            errorMessage: error.message,
+          });
           return handleAppError(error, 'task.update');
         }
 
@@ -265,12 +307,22 @@ export const tryHandleTaskCommand = (
       try {
         const result = taskRepository.deleteTask(taskId, input.userId);
 
+        taskToolLogger.debug('task delete output', {
+          taskId: result.taskId,
+          durationMs: Date.now() - startedAt,
+        });
+
         return {
           reply: buildTaskDeletedReply(result.taskId),
           usedTools: ['task.delete'],
         };
       } catch (error) {
         if (error instanceof AppError) {
+          taskToolLogger.warn('task delete failed', {
+            taskId,
+            durationMs: Date.now() - startedAt,
+            errorMessage: error.message,
+          });
           return handleAppError(error, 'task.delete');
         }
 

@@ -886,11 +886,17 @@ const mapAlarmToolError = (
 const createCreateAlarmSessionTool = (client: AlarmAgentClient) => {
   return tool(
     async (): Promise<CreateAlarmSessionSuccess | AlarmToolFailure> => {
+      const startedAt = Date.now();
+      alarmToolLogger.debug('create_alarm_session input', {});
+
       try {
         const payload = await client.createSession();
         const sessionId = extractSessionId(payload);
 
         if (!sessionId) {
+          alarmToolLogger.warn('create_alarm_session failed: no session_id', {
+            durationMs: Date.now() - startedAt,
+          });
           return buildToolFailure(
             "alarm_session_failed",
             "Alarm backend returned no session_id.",
@@ -898,15 +904,23 @@ const createCreateAlarmSessionTool = (client: AlarmAgentClient) => {
           );
         }
 
-        return {
+        const result: CreateAlarmSessionSuccess = {
           success: true,
           session_id: sessionId,
           raw: payload,
         };
+
+        alarmToolLogger.debug('create_alarm_session output', {
+          sessionId,
+          durationMs: Date.now() - startedAt,
+        });
+
+        return result;
       } catch (error) {
-        alarmToolLogger.warn("create_alarm_session failed", {
+        alarmToolLogger.warn('create_alarm_session failed', {
+          durationMs: Date.now() - startedAt,
           errorType:
-            error instanceof AlarmAgentClientError ? error.type : "UNKNOWN",
+            error instanceof AlarmAgentClientError ? error.type : 'UNKNOWN',
         });
 
         return mapAlarmToolError("session", error);
@@ -926,28 +940,44 @@ const createListAlarmsTool = (client: AlarmAgentClient) => {
     async (
       input: Record<string, unknown>,
     ): Promise<ListAlarmsSuccess | AlarmToolFailure> => {
+      const startedAt = Date.now();
       const normalizedInput = normalizeListAlarmsInput(input);
+
+      alarmToolLogger.debug('list_alarms input', {
+        status: normalizedInput.status || 'all',
+        page: normalizedInput.page,
+        pageSize: normalizedInput.page_size,
+      });
 
       try {
         const payload = await client.listAlarms(normalizedInput);
-        return normalizeListAlarmsResponse(payload, normalizedInput);
-      } catch (error) {
-        alarmToolLogger.warn("list_alarms failed", {
-          errorType:
-            error instanceof AlarmAgentClientError ? error.type : "UNKNOWN",
+        const result = normalizeListAlarmsResponse(payload, normalizedInput);
+
+        alarmToolLogger.debug('list_alarms output', {
+          total: result.total,
+          alarmCount: result.alarms.length,
+          durationMs: Date.now() - startedAt,
         });
 
-        return mapAlarmToolError("list", error);
+        return result;
+      } catch (error) {
+        alarmToolLogger.warn('list_alarms failed', {
+          durationMs: Date.now() - startedAt,
+          errorType:
+            error instanceof AlarmAgentClientError ? error.type : 'UNKNOWN',
+        });
+
+        return mapAlarmToolError('list', error);
       }
     },
     {
       name: LIST_ALARMS_TOOL_NAME,
       description: [
-        "查询当前告警列表，默认 `status` 传空字符串，不做状态过滤。",
+        '查询当前告警列表，默认 `status` 传空字符串，不做状态过滤。',
         '当用户明确要求查看未处理告警时，请显式传入 `status="Untreated"`。',
         '当用户明确要求查看处理中的告警时，请显式传入 `status="Processing"`。',
-        "当用户想查看当前告警、未处理告警或候选告警列表时，使用这个工具。",
-      ].join(" "),
+        '当用户想查看当前告警、未处理告警或候选告警列表时，使用这个工具。',
+      ].join(' '),
       schema: LIST_ALARMS_SCHEMA,
     },
   );
@@ -958,9 +988,26 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
     async (
       input: Record<string, unknown>,
     ): Promise<AnalyzeAlarmSuccess | AlarmToolFailure> => {
+      const startedAt = Date.now();
       const normalizedInput = normalizeAnalyzeAlarmInput(input);
 
+      alarmToolLogger.debug('analyze_alarm input', {
+        sessionId: isAlarmToolFailure(normalizedInput)
+          ? undefined
+          : normalizedInput.session_id,
+        alarmId: isAlarmToolFailure(normalizedInput)
+          ? undefined
+          : String(normalizedInput.alarms[0]?.id ?? ''),
+        mode: isAlarmToolFailure(normalizedInput)
+          ? undefined
+          : normalizedInput.mode,
+      });
+
       if (isAlarmToolFailure(normalizedInput)) {
+        alarmToolLogger.warn('analyze_alarm invalid input', {
+          durationMs: Date.now() - startedAt,
+          errorType: normalizedInput.error_type,
+        });
         return normalizedInput;
       }
 
@@ -969,9 +1016,14 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
         const analysisMarkdown = buildAnalysisMarkdown(streamResult.events);
 
         if (!analysisMarkdown) {
+          alarmToolLogger.warn('analyze_alarm empty result', {
+            sessionId: normalizedInput.session_id,
+            eventCount: streamResult.events.length,
+            durationMs: Date.now() - startedAt,
+          });
           return buildToolFailure(
-            "alarm_analysis_failed",
-            "Alarm analysis stream completed without usable analysis content.",
+            'alarm_analysis_failed',
+            'Alarm analysis stream completed without usable analysis content.',
             {
               raw_events: streamResult.events,
             },
@@ -981,6 +1033,14 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
         const shouldOfferDispatch =
           detectDispatchRecommendation(analysisMarkdown);
 
+        alarmToolLogger.debug('analyze_alarm output', {
+          sessionId: normalizedInput.session_id,
+          eventCount: streamResult.events.length,
+          analysisLength: analysisMarkdown.length,
+          shouldOfferDispatch,
+          durationMs: Date.now() - startedAt,
+        });
+
         return {
           success: true,
           session_id: normalizedInput.session_id,
@@ -988,24 +1048,25 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
           raw_events: streamResult.events,
           should_offer_dispatch: shouldOfferDispatch,
           recommended_action_hint:
-            shouldOfferDispatch === true ? "create_work_order" : null,
+            shouldOfferDispatch === true ? 'create_work_order' : null,
         };
       } catch (error) {
-        alarmToolLogger.warn("analyze_alarm failed", {
+        alarmToolLogger.warn('analyze_alarm failed', {
+          durationMs: Date.now() - startedAt,
           errorType:
-            error instanceof AlarmAgentClientError ? error.type : "UNKNOWN",
+            error instanceof AlarmAgentClientError ? error.type : 'UNKNOWN',
         });
 
-        return mapAlarmToolError("analysis", error);
+        return mapAlarmToolError('analysis', error);
       }
     },
     {
       name: ANALYZE_ALARM_TOOL_NAME,
       description: [
-        "分析指定告警并返回结构化 analysis_markdown。",
-        "调用 /api/v1/process_alarms 时，会优先从告警对象里的 raw_data 解析原始告警并填入 alarms 数组，同时确保 id 不为空。",
-        "这个工具会消费告警后端的 SSE 响应，不会把原始 SSE 文本直接暴露给 Agent。",
-      ].join(" "),
+        '分析指定告警并返回结构化 analysis_markdown。',
+        '调用 /api/v1/process_alarms 时，会优先从告警对象里的 raw_data 解析原始告警并填入 alarms 数组，同时确保 id 不为空。',
+        '这个工具会消费告警后端的 SSE 响应，不会把原始 SSE 文本直接暴露给 Agent。',
+      ].join(' '),
       schema: ANALYZE_ALARM_SCHEMA,
     },
   );

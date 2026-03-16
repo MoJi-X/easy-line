@@ -1,13 +1,14 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 
-export type LogLevel = 'INFO' | 'WARN' | 'ERROR';
+export type LogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
 export type LogContextValue = string | number | boolean | null | undefined;
 
 export type LogContext = Record<string, LogContextValue>;
 
 export interface Logger {
+  debug(message: string, context?: LogContext): void;
   info(message: string, context?: LogContext): void;
   warn(message: string, context?: LogContext): void;
   error(message: string, context?: LogContext, error?: unknown): void;
@@ -74,6 +75,11 @@ const writeToConsole = (
     return;
   }
 
+  if (level === 'DEBUG') {
+    console.debug(line);
+    return;
+  }
+
   console.info(line);
 };
 
@@ -108,6 +114,9 @@ export const createLogger = (
   filePath: string,
 ): Logger => {
   return {
+    debug(message: string, context?: LogContext): void {
+      log('DEBUG', moduleName, filePath, message, context);
+    },
     info(message: string, context?: LogContext): void {
       log('INFO', moduleName, filePath, message, context);
     },

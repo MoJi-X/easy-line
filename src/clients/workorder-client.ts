@@ -201,9 +201,11 @@ export class WorkOrderClient {
     const startedAt = Date.now();
 
     this.assertConfigured('runWorkflow');
-    workorderClientLogger.info('workorder request started', {
+
+    workorderClientLogger.debug('workorder request input', {
       operation: 'runWorkflow',
-      timeoutMs: this.timeoutMs,
+      user: request.user,
+      inputCount: Object.keys(request.inputs).length,
     });
 
     try {
@@ -220,11 +222,12 @@ export class WorkOrderClient {
       });
       const requestId = extractRequestId(response.headers);
 
-      workorderClientLogger.info('workorder request succeeded', {
+      workorderClientLogger.debug('workorder request output', {
         operation: 'runWorkflow',
         durationMs: Date.now() - startedAt,
         requestId,
         statusCode: response.status,
+        responseType: typeof response.data,
       });
 
       return {

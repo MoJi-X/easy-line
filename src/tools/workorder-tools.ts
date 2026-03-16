@@ -653,9 +653,23 @@ const createCreateWorkOrderTool = (
     async (
       input: Record<string, unknown>,
     ): Promise<CreateWorkOrderSuccess | WorkOrderToolFailure> => {
+      const startedAt = Date.now();
       const normalizedInput = normalizeCreateWorkOrderInput(input);
 
+      workorderToolLogger.debug('create_work_order input', {
+        alarmId: isCreateWorkOrderInputFailure(normalizedInput)
+          ? undefined
+          : pickStringOrNumber(normalizedInput.alarm, [['id'], ['alarm_id'], ['alarmId']]),
+        hasAnalysis: isCreateWorkOrderInputFailure(normalizedInput)
+          ? undefined
+          : normalizedInput.analysis_markdown.length > 0,
+      });
+
       if (isCreateWorkOrderInputFailure(normalizedInput)) {
+        workorderToolLogger.warn('create_work_order invalid input', {
+          durationMs: Date.now() - startedAt,
+          errorType: normalizedInput.error_type,
+        });
         return normalizedInput;
       }
 
@@ -664,6 +678,12 @@ const createCreateWorkOrderTool = (
         !runtimeConfig.workorderPmmsAuthorization ||
         !runtimeConfig.workorderUser
       ) {
+        workorderToolLogger.warn('create_work_order missing business context', {
+          durationMs: Date.now() - startedAt,
+          hasTenantId: Boolean(runtimeConfig.workorderTenantId),
+          hasPmmsAuth: Boolean(runtimeConfig.workorderPmmsAuthorization),
+          hasUser: Boolean(runtimeConfig.workorderUser),
+        });
         return buildToolFailure(
           'missing_business_context',
           '缺少全局建单配置，无法创建工单。',
@@ -671,7 +691,13 @@ const createCreateWorkOrderTool = (
       }
 
       if (runtimeConfig.mockCreateWorkOrder) {
-        return buildMockWorkOrderSuccess(normalizedInput);
+        const result = buildMockWorkOrderSuccess(normalizedInput);
+        workorderToolLogger.debug('create_work_order mock output', {
+          mock: true,
+          workOrderId: result.work_order_id,
+          durationMs: Date.now() - startedAt,
+        });
+        return result;
       }
 
       try {
@@ -679,15 +705,40 @@ const createCreateWorkOrderTool = (
           normalizedInput,
           runtimeConfig,
         );
+
+        workorderToolLogger.debug('create_work_order workflow input', {
+          alarmId: workflowInputs.alarm_id,
+          deviceSn: workflowInputs.device_sn,
+          siteName: workflowInputs.site_name,
+        });
+
         const workflowResponse = await client.runWorkflow({
           inputs: workflowInputs,
           response_mode: 'blocking',
           user: runtimeConfig.workorderUser,
         });
 
-        return normalizeCreateWorkOrderSuccess(workflowResponse);
+        const result = normalizeCreateWorkOrderSuccess(workflowResponse);
+
+        if ('success' in result && result.success) {
+          workorderToolLogger.debug('create_work_order output', {
+            mock: false,
+            workflowRunId: result.workflow_run_id,
+            workOrderId: result.work_order_id,
+            workOrderNo: result.work_order_no,
+            durationMs: Date.now() - startedAt,
+          });
+        } else {
+          workorderToolLogger.warn('create_work_order failed response', {
+            errorType: (result as WorkOrderToolFailure).error_type,
+            durationMs: Date.now() - startedAt,
+          });
+        }
+
+        return result;
       } catch (error) {
         workorderToolLogger.warn('create_work_order failed', {
+          durationMs: Date.now() - startedAt,
           errorType: error instanceof WorkOrderClientError ? error.type : 'UNKNOWN',
         });
 

@@ -352,9 +352,12 @@ export class AlarmAgentClient {
     const startedAt = Date.now();
 
     this.assertConfigured('processAlarmsSse');
-    alarmClientLogger.info('alarm request started', {
+
+    alarmClientLogger.debug('alarm sse request input', {
       operation: 'processAlarmsSse',
-      timeoutMs: this.timeoutMs,
+      sessionId: request.session_id,
+      alarmCount: request.alarms.length,
+      mode: request.mode,
     });
 
     try {
@@ -385,10 +388,11 @@ export class AlarmAgentClient {
 
       const result = await this.collectSseEvents(stream);
 
-      alarmClientLogger.info('alarm request succeeded', {
+      alarmClientLogger.debug('alarm sse request output', {
         operation: 'processAlarmsSse',
         durationMs: Date.now() - startedAt,
         eventCount: result.events.length,
+        streamCompleted: result.streamCompleted,
       });
 
       return result;
@@ -396,7 +400,7 @@ export class AlarmAgentClient {
       const wrappedError = await this.wrapRequestError('processAlarmsSse', error);
 
       alarmClientLogger.error(
-        'alarm request failed',
+        'alarm sse request failed',
         {
           operation: 'processAlarmsSse',
           durationMs: Date.now() - startedAt,
@@ -500,9 +504,13 @@ export class AlarmAgentClient {
     const startedAt = Date.now();
 
     this.assertConfigured(operation);
-    alarmClientLogger.info('alarm request started', {
+
+    alarmClientLogger.debug('alarm request input', {
       operation,
-      timeoutMs: this.timeoutMs,
+      method: requestConfig.method,
+      url: requestConfig.url,
+      hasData: Boolean(requestConfig.data),
+      hasParams: Boolean(requestConfig.params),
     });
 
     try {
@@ -511,10 +519,11 @@ export class AlarmAgentClient {
         timeout: this.timeoutMs,
       });
 
-      alarmClientLogger.info('alarm request succeeded', {
+      alarmClientLogger.debug('alarm request output', {
         operation,
         durationMs: Date.now() - startedAt,
         statusCode: response.status,
+        responseType: typeof response.data,
       });
 
       return response.data;
