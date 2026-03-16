@@ -20,6 +20,9 @@ export interface AppConfig {
   tavilyApiBaseUrl?: string;
   tavilyApiKey?: string;
   tavilySearchTimeoutMs: number;
+  workorderPmmsAuthorization?: string;
+  workorderTenantId?: string;
+  workorderUser?: string;
 }
 
 const REQUIRED_KEYS: RequiredConfigKey[] = [
@@ -133,4 +136,7 @@ export const config: AppConfig = {
   tavilyApiBaseUrl: parseOptionalUrl("TAVILY_API_BASE_URL"),
   tavilyApiKey: getOptionalEnv("TAVILY_API_KEY"),
   tavilySearchTimeoutMs: parsePositiveIntegerEnv("TAVILY_SEARCH_TIMEOUT_MS", 5000),
+  workorderPmmsAuthorization: getOptionalEnv("WORKORDER_PMMS_AUTHORIZATION"),
+  workorderTenantId: getOptionalEnv("WORKORDER_TENANT_ID"),
+  workorderUser: getOptionalEnv("WORKORDER_USER"),
 };

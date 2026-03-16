@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.json",
     "verify:agent": "node dist/scripts/verify-agent-service.js",
     "verify:alarm": "node dist/scripts/verify-alarm-tools.js",
+    "verify:alarm-workflow": "node dist/scripts/verify-alarm-agent-workflow.js",
     "verify:tasks": "node dist/scripts/verify-task-slice.js",
     "start": "node dist/index.js"
   },
