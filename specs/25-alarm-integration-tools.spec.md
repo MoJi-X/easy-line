@@ -35,7 +35,7 @@
 - inputs：07 文档 4.1 的 Tool 1、Tool 2、7.1、7.2、8.3；需求文档 3.2.3、5.1。
 - outputs：`create_alarm_session`、`list_alarms` Tool schema 与结构化结果对象。
 - dependencies：ALARM-001。
-- implementation notes：`list_alarms` 需要把原始响应中的 `data` 归一成 `alarms`；首轮仅保留 Agent 必需字段，例如 `id`、`device_sn`、`site_name`、`alarm_code`、`processing_status`、`created_at`；允许把完整原始响应放入 `raw` 字段备用。
+- implementation notes：`list_alarms` 需要把原始响应中的 `data` 归一成 `alarms`；`status` 默认传空字符串，表示不过滤处理状态，只有上游明确要求未处理告警时才显式传 `Untreated`；首轮仅保留 Agent 必需字段，例如 `id`、`device_sn`、`site_name`、`alarm_code`、`processing_status`、`created_at`；允许把完整原始响应放入 `raw` 字段备用。
 - acceptance criteria：用户请求“查看告警”时，Agent 可以拿到编号化、可读且字段稳定的告警列表。
 
 ### ALARM-003 `analyze_alarm` SSE 聚合与分析结果清洗
@@ -63,6 +63,7 @@
 - scope: 本轮实现 `ALARM-001`、`ALARM-002`、`ALARM-003`，新增告警域配置、`AlarmAgentClient`、`create_alarm_session`/`list_alarms`/`analyze_alarm` Tool，并接入统一 Tool Registry。
 - decision: 告警后端配置保持可选；即使未配置 `ALARM_AGENT_BASE_URL`，应用仍可启动，但告警 Tool 会返回结构化失败对象，不会伪造成功结果。
 - decision: SSE 在 Client 层只负责读取并解析事件，不拼装最终分析结论；`analysis_markdown`、`should_offer_dispatch` 和 `partial_analysis` 统一在 Tool 层生成，避免把原始 SSE 文本直接暴露给 Agent。
+- decision: `list_alarms` 的 `status` 默认值改为空字符串，表示不过滤；需要“未处理告警”时由上游显式传 `Untreated`，避免把状态过滤隐式耦合在 Tool 默认值里。
 - decision: `list_alarms` 在结构化 `alarms` 数组之外补充 `alarm_summary_markdown`，用于给 Agent 提供稳定、编号化的可读列表，同时保留 `raw` 备用。
 - deferred: `ALARM-004`、告警状态机、人机确认节点、工单创建与 Dify 联调继续延期到 `specs/26-alarm-agent-workflow.spec.md` 和 `specs/27-workorder-dispatch.spec.md`，本轮不实现。
 - validation: 新增 `src/scripts/verify-alarm-tools.ts`，通过本地 mock HTTP/SSE 服务验证 `create_alarm_session -> list_alarms -> analyze_alarm` 主链路，以及 SSE 中断时的 `partial_analysis` 降级结果。

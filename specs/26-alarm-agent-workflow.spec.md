@@ -35,7 +35,7 @@
 - inputs：07 文档 3.2、8.1、8.3；需求文档 3.1.3、3.2.4。
 - outputs：告警选择规则、编号到告警对象的映射逻辑、缺失状态时的追问语义。
 - dependencies：ALARM-WF-001、`specs/25-alarm-integration-tools.spec.md` 的 ALARM-002、ALARM-003。
-- implementation notes：当用户要求“查看告警”时先调用 `list_alarms`；当用户要求“分析第 2 条”时必须先从最近的 `alarmList` 取对应对象；没有候选列表时先提醒用户重新查询；不直接把 `/api/v1/chat` 作为主分析路径。
+- implementation notes：当用户要求“查看告警”时先调用 `list_alarms`，默认沿用 Tool 的空字符串 `status`；当用户明确要求“查看当前未处理告警”时，必须显式传 `status='Untreated'`；当用户要求“分析第 2 条”时必须先从最近的 `alarmList` 取对应对象；没有候选列表时先提醒用户重新查询；不直接把 `/api/v1/chat` 作为主分析路径。
 - acceptance criteria：用户在一次会话内可先看列表再分析指定项；没有上下文时 Agent 不会错误分析空对象或误选告警。
 
 ### ALARM-WF-003 人机确认节点与状态清理
@@ -67,6 +67,7 @@
 ## 本轮实现记录
 - scope: 本轮实现 `ALARM-WF-001`、`ALARM-WF-002`、`ALARM-WF-003`、`ALARM-WF-004`，在 `AgentService` 中补齐用户级会话容器、告警意图路由、分析后的确认节点和全局建单配置检查。
 - decision: 告警状态机收敛到 `src/services/agent.ts` 的显式编排层，优先拦截“查看告警”“分析第 N 条告警”“确认/取消建单”，其他消息继续走现有 LangChain Agent。
+- decision: 告警列表意图不再依赖 `list_alarms` 的隐式默认过滤；只有用户明确要求“未处理告警”时才显式传 `status='Untreated'`，普通“查看告警”保持默认空字符串筛选。
 - decision: 会话状态按 `userId` 统一归档为 `messages + alarmWorkflow`，其中仅保存 `alarmSessionId`、`alarmList`、`selectedAlarm`、`lastAnalysisMarkdown`、`pendingConfirmation`、`lastWorkOrderResult`，不落 `tenant_id`、`pmms_authorization`、`user`。
 - decision: 用户确认建单时只检查 `config.workorderTenantId`、`config.workorderPmmsAuthorization`、`config.workorderUser`；若任一缺失，固定回复“当前未配置全局建单上下文，暂时只能完成告警分析”，且不伪造建单成功。
 - deferred: 真实 `create_work_order` Tool、Dify Workflow Client、字段映射与结果回写已在 `specs/27-workorder-dispatch.spec.md` 落地；本 spec 继续只负责确认节点与全局建单配置检查，不重复下沉建单实现。

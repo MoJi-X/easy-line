@@ -34,6 +34,7 @@ const DEFAULT_AGENT_TIMEOUT_MS = 8000;
 const INVALID_AGENT_REPLY_TEXT = '抱歉，我暂时无法生成有效回复，请稍后再试。';
 const DEFAULT_ALARM_ANALYZE_PROMPT = '如需继续分析，请回复“分析第 1 条告警”这样的指令。';
 const MISSING_ALARM_LIST_REPLY = '当前会话里还没有可分析的告警列表，请先回复“查看当前未处理告警”。';
+const UNTREATED_ALARM_STATUS = 'Untreated';
 const AMBIGUOUS_ALARM_SELECTION_REPLY =
   '当前有多条告警候选，请明确回复“分析第 N 条告警”。';
 const CANCEL_CONFIRMATION_REPLY =
@@ -145,6 +146,9 @@ type AgentToolName =
 type WorkOrderContextKey = (typeof WORKORDER_CONTEXT_KEYS)[number];
 type PendingConfirmationAction = 'create_work_order';
 type PendingConfirmationResolution = 'cancel' | 'confirm' | null;
+type AlarmListIntent = {
+  status: string;
+};
 type AlarmAnalyzeIntent =
   | {
       type: 'current';
@@ -316,9 +320,16 @@ const parseChineseOrdinal = (token: string): number | null => {
   return parsedValue > 0 ? parsedValue : null;
 };
 
-const isAlarmListIntent = (message: string): boolean => {
+const parseAlarmListIntent = (message: string): AlarmListIntent | null => {
   const trimmedMessage = message.trim();
-  return ALARM_LIST_PATTERNS.some((pattern) => pattern.test(trimmedMessage));
+
+  if (!ALARM_LIST_PATTERNS.some((pattern) => pattern.test(trimmedMessage))) {
+    return null;
+  }
+
+  return {
+    status: /未处理/u.test(trimmedMessage) ? UNTREATED_ALARM_STATUS : '',
+  };
 };
 
 const parseAlarmAnalyzeIntent = (
@@ -942,8 +953,11 @@ export class AgentService {
 
   private async handleAlarmListIntent(
     userId: string,
+    intent: AlarmListIntent,
   ): Promise<ProcessUserMessageResult> {
-    const toolResult = await this.invokeAlarmTool(LIST_ALARMS_TOOL_NAME, {});
+    const toolResult = await this.invokeAlarmTool(LIST_ALARMS_TOOL_NAME, {
+      status: intent.status,
+    });
 
     if (isAlarmToolFailure(toolResult)) {
       return {
@@ -1147,13 +1161,16 @@ export class AgentService {
   private async tryProcessAlarmWorkflow(
     input: NormalizedUserMessageInput,
   ): Promise<ProcessUserMessageResult | null> {
-    if (isAlarmListIntent(input.message)) {
+    const listIntent = parseAlarmListIntent(input.message);
+
+    if (listIntent) {
       agentLogger.info('alarm workflow list intent matched', {
         channel: input.channel,
         userId: maskUserId(input.userId),
+        alarmStatus: listIntent.status || 'all',
       });
 
-      return this.handleAlarmListIntent(input.userId);
+      return this.handleAlarmListIntent(input.userId, listIntent);
     }
 
     const analyzeIntent = parseAlarmAnalyzeIntent(input.message);

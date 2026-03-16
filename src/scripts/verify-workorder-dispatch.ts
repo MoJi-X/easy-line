@@ -48,8 +48,19 @@ const writeJson = (
 
 const createAlarmVerificationServer = (): Promise<{
   baseUrl: string;
+  getLastListRequest: () => {
+    page: string | null;
+    page_size: string | null;
+    status: string | null;
+  } | null;
   server: Server;
 }> => {
+  let lastListRequest: {
+    page: string | null;
+    page_size: string | null;
+    status: string | null;
+  } | null = null;
+
   const server = createServer((req, res) => {
     void (async () => {
       const requestUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -62,6 +73,11 @@ const createAlarmVerificationServer = (): Promise<{
       }
 
       if (req.method === 'GET' && requestUrl.pathname === '/api/v1/alarms') {
+        lastListRequest = {
+          status: requestUrl.searchParams.get('status'),
+          page: requestUrl.searchParams.get('page'),
+          page_size: requestUrl.searchParams.get('page_size'),
+        };
         writeJson(res, 200, {
           total: 1,
           page: 1,
@@ -121,6 +137,7 @@ const createAlarmVerificationServer = (): Promise<{
       resolve({
         server,
         baseUrl: `http://127.0.0.1:${address.port}`,
+        getLastListRequest: () => lastListRequest,
       });
     });
   });
@@ -273,7 +290,11 @@ const verify = async (): Promise<void> => {
   assert.equal(mockResult.mock, true);
   assert.match(mockResult.work_order_no ?? '', /^MOCK-/u);
 
-  const { server: alarmServer, baseUrl: alarmBaseUrl } =
+  const {
+    server: alarmServer,
+    baseUrl: alarmBaseUrl,
+    getLastListRequest,
+  } =
     await createAlarmVerificationServer();
   const {
     server: workorderServer,
@@ -392,6 +413,11 @@ const verify = async (): Promise<void> => {
     });
 
     assert.deepEqual(listResult.usedTools, ['list_alarms']);
+    assert.deepEqual(getLastListRequest(), {
+      status: 'Untreated',
+      page: '1',
+      page_size: '20',
+    });
 
     const analyzeResult = await liveService.processUserMessage({
       channel: 'chat_api',

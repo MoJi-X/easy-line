@@ -12,7 +12,7 @@ import { createAppLogger } from '../utils/app-logger';
 
 const DEFAULT_ALARM_LIST_PAGE = 1;
 const DEFAULT_ALARM_LIST_PAGE_SIZE = 20;
-const DEFAULT_ALARM_LIST_STATUS = 'Untreated';
+const DEFAULT_ALARM_LIST_STATUS = '';
 const DEFAULT_ANALYZE_MODE = 'standard';
 const DEFAULT_ANALYZE_BUSINESS_TYPE = 'device_alarm';
 const DEFAULT_ANALYZE_LANGUAGE = 'zh';
@@ -101,7 +101,7 @@ const CREATE_ALARM_SESSION_SCHEMA = {
 const LIST_ALARMS_SCHEMA = {
   type: 'object',
   properties: {
-    status: { type: 'string' },
+    status: { type: 'string', default: DEFAULT_ALARM_LIST_STATUS },
     page: { type: 'integer', minimum: 1, default: DEFAULT_ALARM_LIST_PAGE },
     page_size: {
       type: 'integer',
@@ -773,7 +773,8 @@ const createListAlarmsTool = (client: AlarmAgentClient) => {
     {
       name: LIST_ALARMS_TOOL_NAME,
       description: [
-        '查询当前告警列表，默认只查未处理告警。',
+        '查询当前告警列表，默认 `status` 传空字符串，不做状态过滤。',
+        '当用户明确要求查看未处理告警时，请显式传入 `status="Untreated"`。',
         '当用户想查看当前告警、未处理告警或候选告警列表时，使用这个工具。',
       ].join(' '),
       schema: LIST_ALARMS_SCHEMA,

@@ -39,8 +39,19 @@ const writeJson = (
 
 const createVerificationServer = (): Promise<{
   baseUrl: string;
+  getLastListRequest: () => {
+    page: string | null;
+    page_size: string | null;
+    status: string | null;
+  } | null;
   server: Server;
 }> => {
+  let lastListRequest: {
+    page: string | null;
+    page_size: string | null;
+    status: string | null;
+  } | null = null;
+
   const server = createServer((req, res) => {
     void (async () => {
       const requestUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -53,6 +64,11 @@ const createVerificationServer = (): Promise<{
       }
 
       if (req.method === 'GET' && requestUrl.pathname === '/api/v1/alarms') {
+        lastListRequest = {
+          status: requestUrl.searchParams.get('status'),
+          page: requestUrl.searchParams.get('page'),
+          page_size: requestUrl.searchParams.get('page_size'),
+        };
         writeJson(res, 200, {
           total: 1,
           page: 1,
@@ -135,6 +151,7 @@ const createVerificationServer = (): Promise<{
       resolve({
         server,
         baseUrl: `http://127.0.0.1:${address.port}`,
+        getLastListRequest: () => lastListRequest,
       });
     });
   });
@@ -161,7 +178,7 @@ const findTool = (tools: GenericTool[], name: string): GenericTool => {
 };
 
 const verify = async (): Promise<void> => {
-  const { server, baseUrl } = await createVerificationServer();
+  const { server, baseUrl, getLastListRequest } = await createVerificationServer();
 
   try {
     const tools = createAlarmTools({
@@ -224,6 +241,11 @@ const verify = async (): Promise<void> => {
     assert.equal(listResult.alarms[0]?.id, 101);
     assert.equal(listResult.alarms[0]?.device_sn, 'INV-0001');
     assert.match(listResult.alarm_summary_markdown, /1\. 告警ID/u);
+    assert.deepEqual(getLastListRequest(), {
+      status: '',
+      page: '1',
+      page_size: '20',
+    });
 
     const analyzeResult = (await analyzeAlarmTool.invoke({
       session_id: 'session-123',

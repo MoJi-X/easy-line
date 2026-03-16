@@ -39,8 +39,19 @@ const writeJson = (
 
 const createVerificationServer = (): Promise<{
   baseUrl: string;
+  getLastListRequest: () => {
+    page: string | null;
+    page_size: string | null;
+    status: string | null;
+  } | null;
   server: Server;
 }> => {
+  let lastListRequest: {
+    page: string | null;
+    page_size: string | null;
+    status: string | null;
+  } | null = null;
+
   const server = createServer((req, res) => {
     void (async () => {
       const requestUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
@@ -53,6 +64,11 @@ const createVerificationServer = (): Promise<{
       }
 
       if (req.method === 'GET' && requestUrl.pathname === '/api/v1/alarms') {
+        lastListRequest = {
+          status: requestUrl.searchParams.get('status'),
+          page: requestUrl.searchParams.get('page'),
+          page_size: requestUrl.searchParams.get('page_size'),
+        };
         writeJson(res, 200, {
           total: 2,
           page: 1,
@@ -137,6 +153,7 @@ const createVerificationServer = (): Promise<{
       resolve({
         server,
         baseUrl: `http://127.0.0.1:${address.port}`,
+        getLastListRequest: () => lastListRequest,
       });
     });
   });
@@ -174,7 +191,7 @@ const verify = async (): Promise<void> => {
   assert.equal(availableContext.available, true);
   assert.deepEqual(availableContext.missingKeys, []);
 
-  const { server, baseUrl } = await createVerificationServer();
+  const { server, baseUrl, getLastListRequest } = await createVerificationServer();
 
   try {
     const toolRegistry = createToolRegistry({
@@ -210,6 +227,11 @@ const verify = async (): Promise<void> => {
     assert.deepEqual(listResult.usedTools, ['list_alarms']);
     assert.match(listResult.reply, /1\. 告警ID/u);
     assert.match(listResult.reply, /分析第 1 条告警/u);
+    assert.deepEqual(getLastListRequest(), {
+      status: 'Untreated',
+      page: '1',
+      page_size: '20',
+    });
 
     const listedSession = service.getSessionContext('alarm-user');
 
