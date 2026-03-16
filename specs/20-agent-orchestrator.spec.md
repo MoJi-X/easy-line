@@ -44,6 +44,7 @@
 - acceptance criteria：不同用户上下文互不污染；同一用户最多保留最近 3 轮；`/chat` 与 LINE 文本消息共享同一上下文和处理逻辑。
 
 ### AGT-003 Tool Registry 与 Tavily 搜索工具
+- status: completed
 - goal：建立统一 Tool Registry，并先接入 Tavily 搜索工具。
 - inputs：需求文档 3.2.3、3.2.4、3.5；架构文档 4.2、4.5；API 文档 7.2。
 - outputs：`src/tools/index.ts`、`src/tools/tavily-search.ts`、工具注册接口。
@@ -52,6 +53,7 @@
 - acceptance criteria：实时信息问题可触发 `search.tavily`；搜索结果可被整理为文本回复；搜索失败不暴露密钥。
 
 ### AGT-004 `/chat` 调试入口与一致性校验
+- status: completed
 - goal：让 `/chat` 成为真实消息链路的等价调试入口。
 - inputs：需求文档 3.1.1、5.2、8.1、8.2；API 文档 3.1。
 - outputs：`src/routes/chat.ts`、请求体验证、错误到响应结构的映射。
@@ -65,10 +67,11 @@
 - 演示验收：普通问题可得到 Agent 回复；实时信息问题可自动使用 Tavily；搜索失败时有可读降级。
 
 ## 本轮实现记录
-- scope: 仅实现 `AGT-001` 与 `AGT-002`，建立统一 `AgentService` 入口和按 `userId` 管理的最近 3 轮上下文。
-- deferred: `AGT-003` Tavily Tool Registry、任务工具、JSON 持久化、任务所有权校验、天气调度执行均延期到后续 spec 切片。
-- decision: `/webhook` 与 `/chat` 必须直接复用同一个 `AgentService.processUserMessage()`，不再保留旧的“直接 LLM 主链路”作为正式路径。
-- validation: 本轮补最小自检脚本，重点覆盖输入标准化、上下文裁剪，以及 `/webhook`、`/chat` 共用服务入口。
+- scope: 本轮实现 `AGT-003` 与 `AGT-004`，补齐 Tool Registry、`search.tavily`、Agent 自动搜索提示和 `/chat` 一致性校验。
+- deferred: 任务工具、JSON 持久化、任务所有权校验、天气调度执行仍延期到后续 spec 切片，不在本轮实现。
+- decision: Tool Registry 首轮只注册 `search.tavily`，但保留统一注册入口，后续任务工具通过同一入口注入；即使未配置 Tavily Key，也保持工具可注册并在运行时返回可读降级。
+- decision: `/chat` 继续只复用 `AgentService.processUserMessage()`，请求体验证与错误结构保留在 HTTP 层，不新增任何绕过 Agent 的调试分支。
+- validation: 本轮补充 Tavily 工具自检、工具降级自检，以及 Agent 通过 `search.tavily` 的最小回归验证。
 
 ## 风险与回退
 - 风险：`createAgent()` 与当前直接模型调用方式差异较大，若边界不清会导致 `/webhook` 与 `/chat` 行为分叉。
@@ -78,4 +81,6 @@
 ## 当前实现基线
 - 已完成统一 `AgentService`，`/webhook` 与 `/chat` 复用同一个 `processUserMessage()` 入口。
 - 已按 `userId` 落地最近 3 轮上下文内存，旧的“直接 LLM 主链路”不再作为正式路径保留。
-- 下一步进入 `AGT-003`，补 Tool Registry 与 Tavily 搜索工具接入；告警域 Tool 与状态机扩展将分别由 `specs/25-alarm-integration-tools.spec.md` 和 `specs/26-alarm-agent-workflow.spec.md` 承接。
+- 已补齐 Tool Registry，并通过 `search.tavily` 接入 Tavily 搜索、结果整理和中文降级回复。
+- `/chat` 与 LINE 文本消息继续复用同一 Agent 主链路，实时信息问题会共享同一工具调用与降级行为。
+- 下一步进入 `specs/30-task-crud-persistence.spec.md`，补任务工具注入、运行时 CRUD 与 JSON 持久化；告警域 Tool 与状态机扩展将分别由 `specs/25-alarm-integration-tools.spec.md` 和 `specs/26-alarm-agent-workflow.spec.md` 承接。

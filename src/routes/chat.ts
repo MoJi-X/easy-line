@@ -10,21 +10,8 @@ interface ChatRequestBody {
 
 const router = Router();
 
-const getRequiredTextField = (
-  value: unknown,
-  fieldName: 'userId' | 'message',
-): string => {
-  if (typeof value !== 'string') {
-    throw new AppError(400, 'INVALID_ARGUMENT', `${fieldName} must be a non-empty string.`);
-  }
-
-  const normalizedValue = value.trim();
-
-  if (!normalizedValue) {
-    throw new AppError(400, 'INVALID_ARGUMENT', `${fieldName} must be a non-empty string.`);
-  }
-
-  return normalizedValue;
+const getChatBodyField = (value: unknown): string => {
+  return typeof value === 'string' ? value : '';
 };
 
 router.post(
@@ -35,8 +22,8 @@ router.post(
     next: NextFunction,
   ) => {
     try {
-      const userId = getRequiredTextField(req.body?.userId, 'userId');
-      const message = getRequiredTextField(req.body?.message, 'message');
+      const userId = getChatBodyField(req.body?.userId);
+      const message = getChatBodyField(req.body?.message);
       const agentResult = await agentService.processUserMessage({
         channel: 'chat_api',
         userId,
@@ -54,12 +41,7 @@ router.post(
         },
       });
     } catch (error) {
-      if (error instanceof AppError) {
-        next(error);
-        return;
-      }
-
-      next(mapAgentErrorToAppError(error));
+      next(error instanceof AppError ? error : mapAgentErrorToAppError(error));
     }
   },
 );
