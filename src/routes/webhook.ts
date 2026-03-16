@@ -7,8 +7,8 @@ import {
 } from '@line/bot-sdk';
 import { Router, type Request, type Response, type NextFunction } from 'express';
 
+import { agentService } from '../services/agent';
 import { buildTextMessage, lineService } from '../services/line';
-import { messageBridgeService } from '../services/message-bridge';
 import { createAppLogger } from '../utils/app-logger';
 import { maskToken, maskUserId } from '../utils/logger';
 
@@ -206,7 +206,7 @@ const handleEvent = async (event: WebhookEvent): Promise<void> => {
   });
 
   try {
-    const bridgeResult = await messageBridgeService.processUserMessage({
+    const agentResult = await agentService.processUserMessage({
       channel: 'line_webhook',
       userId: textMessage.userId,
       message: textMessage.messageText,
@@ -214,13 +214,13 @@ const handleEvent = async (event: WebhookEvent): Promise<void> => {
       messageId: textMessage.messageId,
     });
 
-    await replyToWebhookTextMessage(textMessage, bridgeResult.replyText);
+    await replyToWebhookTextMessage(textMessage, agentResult.reply);
 
     markWebhookEvent(event.webhookEventId, 'completed');
     webhookLogger.info('webhook event processed', {
       ...eventContext,
       duplicate: false,
-      handler: bridgeResult.handler,
+      usedToolCount: agentResult.usedTools.length,
       durationMs: Date.now() - startedAt,
     });
   } catch (error) {

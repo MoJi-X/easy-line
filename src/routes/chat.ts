@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 
 import { AppError } from '../errors/app-error';
-import { messageBridgeService } from '../services/message-bridge';
+import { agentService, mapAgentErrorToAppError } from '../services/agent';
 
 interface ChatRequestBody {
   userId?: unknown;
@@ -37,7 +37,7 @@ router.post(
     try {
       const userId = getRequiredTextField(req.body?.userId, 'userId');
       const message = getRequiredTextField(req.body?.message, 'message');
-      const bridgeResult = await messageBridgeService.processUserMessage({
+      const agentResult = await agentService.processUserMessage({
         channel: 'chat_api',
         userId,
         message,
@@ -49,13 +49,17 @@ router.post(
         data: {
           userId,
           message,
-          reply: bridgeResult.replyText,
-          handler: bridgeResult.handler,
-          usedTools: bridgeResult.usedTools,
+          reply: agentResult.reply,
+          usedTools: agentResult.usedTools,
         },
       });
     } catch (error) {
-      next(error);
+      if (error instanceof AppError) {
+        next(error);
+        return;
+      }
+
+      next(mapAgentErrorToAppError(error));
     }
   },
 );

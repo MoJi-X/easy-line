@@ -24,6 +24,7 @@
 
 ## 任务拆分
 ### AGT-001 Agent 服务骨架与统一入口
+- status: completed
 - goal：建立 `AgentService`，统一封装模型初始化、Agent 创建与消息处理入口。
 - inputs：需求文档 3.1、3.2、6.1；架构文档 4.1；API 文档 3.1、7.1。
 - outputs：`src/services/agent.ts`。
@@ -32,6 +33,7 @@
 - acceptance criteria：Webhook 与 `/chat` 都可通过同一 Agent 入口处理消息；模型异常可被统一捕获并映射。
 
 ### AGT-002 上下文记忆与消息标准化
+- status: completed
 - goal：实现按 `userId` 隔离的短期上下文，并规范来自 Webhook 与 `/chat` 的消息输入。
 - inputs：需求文档 3.2.2、3.2.5、4.1；数据库文档 2.1；架构文档 4.1。
 - outputs：上下文内存管理逻辑、消息标准化层。
@@ -60,11 +62,18 @@
 - 集成验证：真实 Webhook 文本消息与 `POST /chat` 都可触发同一 Agent 流程。
 - 演示验收：普通问题可得到 Agent 回复；实时信息问题可自动使用 Tavily；搜索失败时有可读降级。
 
+## 本轮实现记录
+- scope: 仅实现 `AGT-001` 与 `AGT-002`，建立统一 `AgentService` 入口和按 `userId` 管理的最近 3 轮上下文。
+- deferred: `AGT-003` Tavily Tool Registry、任务工具、JSON 持久化、任务所有权校验、天气调度执行均延期到后续 spec 切片。
+- decision: `/webhook` 与 `/chat` 必须直接复用同一个 `AgentService.processUserMessage()`，不再保留旧的“直接 LLM 主链路”作为正式路径。
+- validation: 本轮补最小自检脚本，重点覆盖输入标准化、上下文裁剪，以及 `/webhook`、`/chat` 共用服务入口。
+
 ## 风险与回退
 - 风险：`createAgent()` 与当前直接模型调用方式差异较大，若边界不清会导致 `/webhook` 与 `/chat` 行为分叉。
 - 风险：Tavily 或模型接口超时会拖慢整条消息链路。
 - 回退：保留单一 Agent 外壳和固定 fallback 回复；必要时先禁用 Tavily 工具，仅验证统一入口与上下文能力。
 
 ## 当前实现基线
-- 当前代码仍以直接模型调用为主，已存在 `/chat` 和短期上下文雏形。
-- 下一步需要把旧的 `LLMService` 角色上提为统一 Agent 编排服务，并把 Tavily 与后续任务工具统一纳入 Tool Registry。
+- 已完成统一 `AgentService`，`/webhook` 与 `/chat` 复用同一个 `processUserMessage()` 入口。
+- 已按 `userId` 落地最近 3 轮上下文内存，旧的“直接 LLM 主链路”不再作为正式路径保留。
+- 下一步进入 `AGT-003`，补 Tool Registry 与 Tavily 搜索工具接入。
