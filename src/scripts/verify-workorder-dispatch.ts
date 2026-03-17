@@ -254,6 +254,11 @@ const verify = async (): Promise<void> => {
     workorderTenantId: config.workorderTenantId,
     workorderUser: config.workorderUser,
   };
+
+  config.workorderPmmsAuthorization = undefined;
+  config.workorderTenantId = undefined;
+  config.workorderUser = undefined;
+
   const missingConfigTools = createWorkOrderTools({
     runtimeConfig: {
       mockCreateWorkOrder: false,
@@ -286,21 +291,26 @@ const verify = async (): Promise<void> => {
   const mockResult = (await mockTool.invoke({
     alarm: {
       id: 202,
-      device_sn: 'INV-202',
+      device_sn: '',
+      raw_data: JSON.stringify({
+        externalId: 'INV-202-RAW',
+      }),
       site_name: 'Mock PV Site',
       alarm_type_name: 'Device Offline',
     },
     analysis_markdown:
-      '### 分析结论\n\n设备 INV-202 长时间离线，建议派单核查现场通信链路、电源状态和数据采集链路。',
+      '### 分析结论\n\n设备 INV-202-RAW 长时间离线，建议派单核查现场通信链路、电源状态和数据采集链路。',
   })) as {
     mock: boolean;
     success: boolean;
+    title: string | null;
     work_order_no: string | null;
   };
 
   assert.equal(mockResult.success, true);
   assert.equal(mockResult.mock, true);
   assert.match(mockResult.work_order_no ?? '', /^MOCK-/u);
+  assert.match(mockResult.title ?? '', /INV-202-RAW/u);
 
   const {
     server: alarmServer,
@@ -332,7 +342,7 @@ const verify = async (): Promise<void> => {
     const liveResult = (await liveTool.invoke({
       alarm: {
         id: 201,
-        device_sn: 'INV-201',
+        device_sn: '',
         device_type: 'inverter',
         site_name: 'Bangkok PV Site',
         alarm_category: 'AlarmWorkOrder',
@@ -340,9 +350,12 @@ const verify = async (): Promise<void> => {
         alarm_type_name: 'Device Offline',
         fault_code: 130,
         created_at: '2026-03-16 09:20:00',
+        raw_data: JSON.stringify({
+          externalId: 'INV-201-RAW',
+        }),
       },
       analysis_markdown:
-        '### 分析结论\n\n设备 INV-201 持续离线超过 4 小时，建议尽快派单排查通信链路、电源状态、站点网络和数据采集链路，并在处理完成后回写结果。',
+        '### 分析结论\n\n设备 INV-201-RAW 持续离线超过 4 小时，建议尽快派单排查通信链路、电源状态、站点网络和数据采集链路，并在处理完成后回写结果。',
     })) as {
       mock: boolean;
       request_id?: string;
@@ -368,9 +381,13 @@ const verify = async (): Promise<void> => {
       directRequestBody.inputs?.pmms_authorization,
       'pmms-live-token',
     );
-    assert.equal(directRequestBody.inputs?.device_sn, 'INV-201');
+    assert.equal(directRequestBody.inputs?.device_sn, 'INV-201-RAW');
     assert.equal(directRequestBody.inputs?.alarm_id, '201');
     assert.equal(typeof directRequestBody.inputs?.fault_desc, 'string');
+    assert.match(
+      directRequestBody.inputs?.fault_desc as string,
+      /INV-201-RAW/u,
+    );
     assert.ok(
       (directRequestBody.inputs?.fault_desc as string).length >= 100,
       'fault_desc should be at least 100 characters.',

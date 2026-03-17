@@ -35,7 +35,7 @@
 - inputs：07 文档 9.1、9.2、12.2、14；改造方案文档 4.4。
 - outputs：告警字段归一规则、`fault_desc` 摘要生成器、Dify `inputs` 映射函数。
 - dependencies：WORKORDER-001、`specs/25-alarm-integration-tools.spec.md` 的 ALARM-003。
-- implementation notes：优先映射 `device_type`、`device_sn`、`alarm_id`、`alarm_category`、`alarm_type`、`alarm_type_name`、`fault_code`、`site_name`；`fault_desc` 只保留告警对象、核心结论、建议动作和重要原因，长度控制在 100 到 400 字；缺省字段允许按 Demo 规则降级，例如 `device_type` 缺省为 `inverter`。
+- implementation notes：优先映射 `device_type`、`device_sn`、`alarm_id`、`alarm_category`、`alarm_type`、`alarm_type_name`、`fault_code`、`site_name`；其中 `device_sn` 需优先从 `alarm.raw_data.externalId` / `alarm.raw_data.external_id` 回填，顶层 `device_sn` / `deviceSn` / `deviceSN` / `externalId` 作为回退；`fault_desc` 只保留告警对象、核心结论、建议动作和重要原因，长度控制在 100 到 400 字；缺省字段允许按 Demo 规则降级，例如 `device_type` 缺省为 `inverter`。
 - acceptance criteria：建单输入结构与 Dify 接口要求一致；超长 Markdown 不会原样透传到工作流。
 
 ### WORKORDER-003 `create_work_order` Tool、配置校验与 mock/live 切换
