@@ -22,6 +22,7 @@ type WorkOrderToolFailureType =
   | "invalid_tool_input"
   | "missing_business_context"
   | "workflow_not_configured"
+  | "workorder_business_failed"
   | "workorder_request_failed"
   | "workorder_response_invalid";
 
@@ -183,6 +184,24 @@ const parseJsonRecord = (value: unknown): Record<string, unknown> => {
     return toRecord(JSON.parse(normalizedValue) as unknown);
   } catch {
     return {};
+  }
+};
+
+const parseJsonValue = (value: unknown): unknown => {
+  if (typeof value !== "string") {
+    return value;
+  }
+
+  const normalizedValue = value.trim();
+
+  if (!normalizedValue) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(normalizedValue) as unknown;
+  } catch {
+    return value;
   }
 };
 
@@ -497,23 +516,98 @@ const buildWorkflowInputs = (
   };
 };
 
-const extractOutputContainer = (payload: unknown): Record<string, unknown> => {
-  const candidates = [
-    getNestedValue(payload, ["data", "outputs"]),
-    getNestedValue(payload, ["outputs"]),
-    getNestedValue(payload, ["result", "outputs"]),
-    getNestedValue(payload, ["data", "data", "outputs"]),
-    getNestedValue(payload, ["data", "output"]),
-    getNestedValue(payload, ["output"]),
+const WORKORDER_RESULT_NESTED_KEYS = [
+  "data",
+  "res",
+  "result",
+  "output",
+  "outputs",
+  "text",
+  "answer",
+  "body",
+  "response",
+] as const;
+
+const buildWorkOrderResultCandidates = (
+  payload: unknown,
+): Record<string, unknown>[] => {
+  const candidates: Record<string, unknown>[] = [];
+  const visited = new Set<Record<string, unknown>>();
+
+  const visit = (
+    value: unknown,
+    depth: number,
+    includeDataKey: boolean,
+  ): void => {
+    if (depth > 5) {
+      return;
+    }
+
+    const normalizedValue = parseJsonValue(value);
+
+    if (!isRecord(normalizedValue) || visited.has(normalizedValue)) {
+      return;
+    }
+
+    visited.add(normalizedValue);
+    candidates.push(normalizedValue);
+
+    for (const key of WORKORDER_RESULT_NESTED_KEYS) {
+      if (key === "data" && !includeDataKey) {
+        continue;
+      }
+
+      visit(normalizedValue[key], depth + 1, true);
+    }
+  };
+
+  const startingPoints: Array<{
+    includeDataKey: boolean;
+    value: unknown;
+  }> = [
+    {
+      value: getNestedValue(payload, ["data", "outputs"]),
+      includeDataKey: true,
+    },
+    {
+      value: getNestedValue(payload, ["outputs"]),
+      includeDataKey: true,
+    },
+    {
+      value: getNestedValue(payload, ["result", "outputs"]),
+      includeDataKey: true,
+    },
+    {
+      value: getNestedValue(payload, ["data", "data", "outputs"]),
+      includeDataKey: true,
+    },
+    {
+      value: getNestedValue(payload, ["data", "output"]),
+      includeDataKey: true,
+    },
+    {
+      value: getNestedValue(payload, ["output"]),
+      includeDataKey: true,
+    },
+    {
+      value: getNestedValue(payload, ["res"]),
+      includeDataKey: true,
+    },
+    {
+      value: getNestedValue(payload, ["result"]),
+      includeDataKey: true,
+    },
+    {
+      value: payload,
+      includeDataKey: false,
+    },
   ];
 
-  for (const candidate of candidates) {
-    if (isRecord(candidate)) {
-      return candidate;
-    }
+  for (const startingPoint of startingPoints) {
+    visit(startingPoint.value, 0, startingPoint.includeDataKey);
   }
 
-  return {};
+  return candidates;
 };
 
 const extractWorkflowRunId = (payload: unknown): string | undefined => {
@@ -531,23 +625,94 @@ const extractWorkflowRunId = (payload: unknown): string | undefined => {
 };
 
 const extractWorkOrderField = (
-  outputs: Record<string, unknown>,
-  payload: unknown,
+  candidates: readonly Record<string, unknown>[],
   paths: readonly (readonly string[])[],
 ): string | null => {
-  const outputValue = pickStringOrNumber(outputs, paths);
+  for (const candidate of candidates) {
+    const value = pickStringOrNumber(candidate, paths);
 
-  if (outputValue !== undefined) {
-    return String(outputValue);
+    if (value !== undefined) {
+      return String(value);
+    }
   }
 
-  const payloadValue = pickStringOrNumber(payload, paths);
-  return payloadValue !== undefined ? String(payloadValue) : null;
+  return null;
+};
+
+const extractBusinessCode = (
+  candidates: readonly Record<string, unknown>[],
+): string | number | undefined => {
+  for (const candidate of candidates) {
+    const businessCode = pickStringOrNumber(candidate, [
+      ["code"],
+      ["business_code"],
+      ["businessCode"],
+      ["error_code"],
+      ["errorCode"],
+    ]);
+
+    if (businessCode !== undefined) {
+      return businessCode;
+    }
+  }
+
+  return undefined;
+};
+
+const isSuccessfulBusinessCode = (value: string | number): boolean => {
+  const normalizedValue = String(value).trim().toLowerCase();
+
+  return ["0", "200", "ok", "success", "succeeded"].includes(
+    normalizedValue,
+  );
+};
+
+const extractBusinessMessage = (
+  candidates: readonly Record<string, unknown>[],
+): string | undefined => {
+  for (const candidate of candidates) {
+    const message = pickString(candidate, [
+      ["message"],
+      ["msg"],
+      ["detail"],
+      ["error"],
+      ["error_message"],
+      ["errorMessage"],
+    ]);
+
+    if (message) {
+      return message;
+    }
+  }
+
+  return undefined;
 };
 
 const normalizeCreateWorkOrderSuccess = (
   response: WorkOrderWorkflowResponse,
 ): CreateWorkOrderSuccess | WorkOrderToolFailure => {
+  const candidates = buildWorkOrderResultCandidates(response.data);
+  const businessCode = extractBusinessCode(candidates);
+
+  if (
+    businessCode !== undefined &&
+    !isSuccessfulBusinessCode(businessCode)
+  ) {
+    const businessMessage = extractBusinessMessage(candidates);
+
+    return buildToolFailure(
+      "workorder_business_failed",
+      businessMessage
+        ? `Workorder workflow returned business failure code ${String(businessCode)}: ${businessMessage}`
+        : `Workorder workflow returned business failure code ${String(businessCode)}.`,
+      {
+        raw: response.data,
+        request_id: response.requestId,
+        status_code: response.statusCode,
+      },
+    );
+  }
+
   const workflowRunId = extractWorkflowRunId(response.data);
 
   if (!workflowRunId) {
@@ -562,66 +727,98 @@ const normalizeCreateWorkOrderSuccess = (
     );
   }
 
-  const outputs = extractOutputContainer(response.data);
+  const workOrderId = extractWorkOrderField(candidates, [
+    ["work_order_id"],
+    ["workOrderId"],
+    ["order_id"],
+    ["orderId"],
+  ]);
+  const workOrderNo = extractWorkOrderField(candidates, [
+    ["work_order_no"],
+    ["workOrderNo"],
+    ["order_no"],
+    ["orderNo"],
+    ["workorder_no"],
+    ["workorderNo"],
+    ["no"],
+  ]);
+
+  if (!workOrderId && !workOrderNo) {
+    return buildToolFailure(
+      "workorder_response_invalid",
+      "Workorder workflow response did not include work_order_id or work_order_no.",
+      {
+        raw: response.data,
+        request_id: response.requestId,
+        status_code: response.statusCode,
+      },
+    );
+  }
 
   return {
     success: true,
     mock: false,
     workflow_run_id: workflowRunId,
-    work_order_id: extractWorkOrderField(outputs, response.data, [
-      ["work_order_id"],
-      ["workOrderId"],
-      ["order_id"],
-      ["orderId"],
-    ]),
-    work_order_no: extractWorkOrderField(outputs, response.data, [
-      ["work_order_no"],
-      ["workOrderNo"],
-      ["order_no"],
-      ["orderNo"],
-      ["no"],
-    ]),
-    title: extractWorkOrderField(outputs, response.data, [
+    work_order_id: workOrderId,
+    work_order_no: workOrderNo,
+    title: extractWorkOrderField(candidates, [
       ["title"],
       ["work_order_title"],
       ["workOrderTitle"],
+      ["workorder_title"],
+      ["workorderTitle"],
+      ["order_title"],
+      ["orderTitle"],
       ["name"],
     ]),
-    level: extractWorkOrderField(outputs, response.data, [
+    level: extractWorkOrderField(candidates, [
       ["level"],
       ["priority"],
       ["severity"],
     ]),
-    status: extractWorkOrderField(outputs, response.data, [
+    status: extractWorkOrderField(candidates, [
       ["status"],
+      ["work_order_status"],
+      ["workOrderStatus"],
+      ["workorder_status"],
+      ["workorderStatus"],
+      ["order_status"],
+      ["orderStatus"],
       ["workflow_status"],
       ["workflowStatus"],
-      ["data", "status"],
     ]),
-    assignee: extractWorkOrderField(outputs, response.data, [
+    assignee: extractWorkOrderField(candidates, [
       ["assignee"],
       ["owner"],
       ["handler"],
+      ["charge_person"],
+      ["chargePerson"],
     ]),
-    acceptor: extractWorkOrderField(outputs, response.data, [
+    acceptor: extractWorkOrderField(candidates, [
       ["acceptor"],
       ["receiver"],
       ["accept_user"],
       ["acceptUser"],
+      ["job_acceptor"],
+      ["jobAcceptor"],
     ]),
-    description: extractWorkOrderField(outputs, response.data, [
+    description: extractWorkOrderField(candidates, [
       ["description"],
       ["summary"],
       ["remark"],
       ["remarks"],
+      ["describe"],
+      ["desc"],
+      ["fault_desc"],
+      ["faultDesc"],
     ]),
-    start_time: extractWorkOrderField(outputs, response.data, [
+    start_time: extractWorkOrderField(candidates, [
       ["start_time"],
       ["startTime"],
       ["planned_start_time"],
       ["plannedStartTime"],
     ]),
-    end_time: extractWorkOrderField(outputs, response.data, [
+    end_time: extractWorkOrderField(candidates, [
       ["end_time"],
       ["endTime"],
       ["planned_end_time"],

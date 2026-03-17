@@ -79,5 +79,6 @@
 - decision: `create_work_order` Tool 的输入只保留 `alarm` 和 `analysis_markdown`；`tenant_id`、`pmms_authorization`、`user` 统一从 `config` 读取，Dify 请求体中的 `user` 固定取 `config.workorderUser`。
 - decision: `fault_desc` 通过“告警上下文 + 清洗后的分析摘要 + 补充建议”生成，并强制截断在 100 到 400 字，避免把长 Markdown 原样透传到工作流。
 - decision: 缺少 `WORKORDER_TENANT_ID`、`WORKORDER_PMMS_AUTHORIZATION`、`WORKORDER_USER` 时，应用仍允许启动；Tool 直接返回 `missing_business_context`，Agent 侧保持固定用户提示“当前未配置全局建单上下文，暂时只能完成告警分析”。
+- decision: live 模式下即使 Dify 返回 HTTP 200，Tool 仍需继续校验业务 `code`；当 `outputs` 为字符串 JSON 或结果字段落在 `res.*` 时，必须先解包再映射，若业务 `code` 非成功码则一律按失败回写，不能伪造成建单成功。
 - deferred: Dify 真实联调字段稳定性、正式环境下的 `pmms_authorization` 格式约束和更细的业务错误码继续保留为后续联调项，本轮仅保证 Demo 必需级别的错误映射与验证闭环。
 - validation: 新增 `src/scripts/verify-workorder-dispatch.ts`，覆盖 `create_work_order` 缺配置阻断、mock 成功返回、live 请求体字段映射、`fault_desc` 长度约束以及 Agent 确认后建单成功回写。
