@@ -2,9 +2,7 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-type RequiredConfigKey =
-  | "LINE_CHANNEL_SECRET"
-  | "LINE_CHANNEL_ACCESS_TOKEN";
+type RequiredConfigKey = "LINE_CHANNEL_SECRET" | "LINE_CHANNEL_ACCESS_TOKEN";
 
 const DEFAULT_LLM_MODEL = "gpt-3.5-turbo";
 const DEFAULT_FLEX_MESSAGE_BUILDER = "code";
@@ -64,7 +62,11 @@ const parsePort = (): number => {
 
   const parsedPort = Number(rawPort);
 
-  if (Number.isNaN(parsedPort) || parsedPort <= 0 || !Number.isInteger(parsedPort)) {
+  if (
+    Number.isNaN(parsedPort) ||
+    parsedPort <= 0 ||
+    !Number.isInteger(parsedPort)
+  ) {
     throw new Error("Invalid PORT. Please provide a positive integer.");
   }
 
@@ -101,10 +103,7 @@ const parseOptionalUrl = (key: string): string | undefined => {
   }
 };
 
-const parsePositiveIntegerEnv = (
-  key: string,
-  defaultValue: number,
-): number => {
+const parsePositiveIntegerEnv = (key: string, defaultValue: number): number => {
   const rawValue = getOptionalEnv(key);
 
   if (!rawValue) {
@@ -148,7 +147,8 @@ const parseBooleanEnv = (key: string, defaultValue: boolean): boolean => {
 
 const parseFlexMessageBuilder = (): FlexMessageBuilderType => {
   const rawValue = getOptionalEnv("FLEX_MESSAGE_BUILDER");
-  const normalizedValue = rawValue?.toLowerCase().trim() || DEFAULT_FLEX_MESSAGE_BUILDER;
+  const normalizedValue =
+    rawValue?.toLowerCase().trim() || DEFAULT_FLEX_MESSAGE_BUILDER;
   return normalizedValue === "llm" ? "llm" : "code";
 };
 
@@ -173,7 +173,10 @@ export const config: AppConfig = {
   port: parsePort(),
   tavilyApiBaseUrl: parseOptionalUrl("TAVILY_API_BASE_URL"),
   tavilyApiKey: getOptionalEnv("TAVILY_API_KEY"),
-  tavilySearchTimeoutMs: parsePositiveIntegerEnv("TAVILY_SEARCH_TIMEOUT_MS", 5000),
+  tavilySearchTimeoutMs: parsePositiveIntegerEnv(
+    "TAVILY_SEARCH_TIMEOUT_MS",
+    5000,
+  ),
   workorderPmmsAuthorization: getOptionalEnv("WORKORDER_PMMS_AUTHORIZATION"),
   workorderTenantId: getOptionalEnv("WORKORDER_TENANT_ID"),
   workorderUser: getOptionalEnv("WORKORDER_USER"),
