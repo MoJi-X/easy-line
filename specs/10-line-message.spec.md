@@ -34,7 +34,7 @@
 - inputs：需求文档 3.1、5.1；架构文档 3.2、4.1；API 文档 2.1。
 - outputs：`src/services/line.ts`、`src/routes/webhook.ts`。
 - dependencies：LINE-001。
-- implementation notes：使用 `middleware()` 完成签名校验；统一封装 `replyMessage`、`pushMessage`、`multicast`；Webhook 必须快速返回 `{status:'ok'}`，后续业务处理异步转交桥接接口。
+- implementation notes：使用 `middleware()` 完成签名校验；统一封装 `replyMessage`、`pushMessage`、`multicast`；Webhook 必须快速返回 `{status:'ok'}`，后续业务处理异步转交桥接接口；发往 LINE 的文本消息发送前要转成纯文本友好格式，避免 Markdown 标记原样透出；一对一文本消息进入异步处理后优先触发 Loading Indicator API，失败仅记录日志，不阻断主回复。
 - acceptance criteria：Webhook 可接收 LINE 回调；签名校验连通；Reply 与 Push 能力对下游模块可复用。
 
 ### LINE-003 文本消息提取与业务桥接
@@ -58,3 +58,4 @@
 ## 当前实现基线
 - 已有 `src/index.ts`、`src/routes/webhook.ts`、`src/services/line.ts` 的最小运行基础。
 - 下一步需要把当前 Webhook 内的业务处理进一步抽象为统一桥接接口，避免继续耦合到旧的 LLM 流程。
+- 当前增量补充：Webhook 文本链路需要在进入 Agent 前触发 loading 动画，且所有发往 LINE 的文本回复都需保持纯文本显示效果。

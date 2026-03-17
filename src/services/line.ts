@@ -1,6 +1,7 @@
 import {
   Client,
   HTTPError,
+  messagingApi,
   type Message,
   type ClientConfig,
   type TextMessage,
@@ -19,9 +20,23 @@ export interface LineMessageContext {
   isRedelivery?: boolean;
 }
 
+export interface ShowLoadingIndicatorContext {
+  userId: string;
+  loadingSeconds?: number;
+  webhookEventId?: string;
+}
+
+type ShowLoadingAnimationRequest = {
+  chatId: string;
+  loadingSeconds?: number;
+};
+
 const lineLogger = createAppLogger('line');
 const LINE_REQUEST_ID_HEADER = 'x-line-request-id';
 const DEFAULT_REPLY_TEXT = '抱歉，我现在暂时无法回答，请稍后再试。';
+const DEFAULT_LOADING_SECONDS = 15;
+const MIN_LOADING_SECONDS = 5;
+const MAX_LOADING_SECONDS = 60;
 type LineSendOperation = 'replyMessage' | 'pushMessage' | 'multicast';
 
 const isTextMessage = (
@@ -30,8 +45,35 @@ const isTextMessage = (
   return message.type === 'text';
 };
 
+const normalizeLoadingSeconds = (loadingSeconds: number): number => {
+  const normalizedValue = Number.isFinite(loadingSeconds)
+    ? Math.floor(loadingSeconds)
+    : DEFAULT_LOADING_SECONDS;
+  const boundedValue = Math.min(
+    MAX_LOADING_SECONDS,
+    Math.max(MIN_LOADING_SECONDS, normalizedValue),
+  );
+
+  return Math.ceil(boundedValue / MIN_LOADING_SECONDS) * MIN_LOADING_SECONDS;
+};
+
+const toLinePlainText = (text: string): string => {
+  return text
+    .replace(/\r\n/g, '\n')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '$1 ($2)')
+    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '• ')
+    .replace(/^\s*>\s?/gm, '')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_\n]+)_/g, '$1')
+    .replace(/\n{3,}/g, '\n\n');
+};
+
 const normalizeTextMessage = (text: string): string => {
-  const normalizedText = text.trim();
+  const normalizedText = toLinePlainText(text).trim();
 
   return normalizedText.length > 0
     ? normalizedText.slice(0, 5000)
@@ -92,25 +134,36 @@ const getLineRequestId = (response: unknown): string | undefined => {
   return typeof requestId === 'string' ? requestId : undefined;
 };
 
-const createLineClient = (): Client => {
+const getLineClientConfig = (): ClientConfig => {
   const channelAccessToken = process.env.LINE_CHANNEL_ACCESS_TOKEN;
 
   if (!channelAccessToken) {
     throw new Error('Missing required env: LINE_CHANNEL_ACCESS_TOKEN');
   }
 
-  const config: ClientConfig = {
+  return {
     channelAccessToken,
   };
+};
 
-  return new Client(config);
+const createLineClient = (): Client => {
+  return new Client(getLineClientConfig());
+};
+
+const createLoadingClient = (): messagingApi.MessagingApiClient => {
+  return new messagingApi.MessagingApiClient(getLineClientConfig());
 };
 
 export class LineService {
   private readonly client: Client;
+  private readonly loadingClient: messagingApi.MessagingApiClient;
 
-  constructor(client: Client = createLineClient()) {
+  constructor(
+    client: Client = createLineClient(),
+    loadingClient: messagingApi.MessagingApiClient = createLoadingClient(),
+  ) {
     this.client = client;
+    this.loadingClient = loadingClient;
   }
 
   private async sendMessages(
@@ -172,7 +225,8 @@ export class LineService {
         ...context,
         replyToken,
       },
-      async (normalizedMessages) => this.client.replyMessage(replyToken, normalizedMessages),
+      async (normalizedMessages) =>
+        this.client.replyMessage(replyToken, normalizedMessages),
     );
   }
 
@@ -202,6 +256,41 @@ export class LineService {
       },
       async (normalizedMessages) => this.client.multicast(to, normalizedMessages),
     );
+  }
+
+  async showLoadingIndicator(
+    context: ShowLoadingIndicatorContext,
+  ): Promise<void> {
+    const request: ShowLoadingAnimationRequest = {
+      chatId: context.userId,
+      loadingSeconds: normalizeLoadingSeconds(
+        context.loadingSeconds ?? DEFAULT_LOADING_SECONDS,
+      ),
+    };
+
+    try {
+      const response = await this.loadingClient.showLoadingAnimation(request);
+
+      lineLogger.info('line showLoadingAnimation succeeded', {
+        webhookEventId: context.webhookEventId,
+        userId: maskUserId(context.userId),
+        lineStatus: 200,
+        lineRequestId: getLineRequestId(response),
+        lineResponseBody: JSON.stringify(response),
+        loadingSeconds: request.loadingSeconds,
+      });
+    } catch (error) {
+      const errorDetails = getAxiosErrorDetails(error);
+
+      lineLogger.warn('line showLoadingAnimation failed', {
+        webhookEventId: context.webhookEventId,
+        userId: maskUserId(context.userId),
+        lineStatus: errorDetails.statusCode,
+        lineRequestId: errorDetails.lineRequestId,
+        lineResponseBody: errorDetails.responseData,
+        loadingSeconds: request.loadingSeconds,
+      });
+    }
   }
 }
 

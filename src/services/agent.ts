@@ -1,69 +1,80 @@
 import {
   AIMessage,
   HumanMessage,
+  SystemMessage,
   type BaseMessage,
-} from '@langchain/core/messages';
-import type { LanguageModelLike } from '@langchain/core/language_models/base';
-import { ChatOpenAI } from '@langchain/openai';
-import { createAgent } from 'langchain';
+} from "@langchain/core/messages";
+import type { LanguageModelLike } from "@langchain/core/language_models/base";
+import { ChatOpenAI } from "@langchain/openai";
+import { createAgent } from "langchain";
 
-import { config } from '../config';
-import { AppError } from '../errors/app-error';
+import { config } from "../config";
+import { AppError } from "../errors/app-error";
 import {
   type AlarmToolFailure,
   type AnalyzeAlarmSuccess,
   type CreateAlarmSessionSuccess,
   type ListAlarmsSuccess,
   type NormalizedAlarmRecord,
-} from '../tools/alarm-tools';
+} from "../tools/alarm-tools";
 import {
   type CreateWorkOrderSuccess,
   type WorkOrderToolFailure,
-} from '../tools/workorder-tools';
+} from "../tools/workorder-tools";
 import {
   createToolRegistry,
   type AgentTool,
   type ToolRegistry,
-} from '../tools';
-import { createAppLogger } from '../utils/app-logger';
-import { maskUserId } from '../utils/logger';
+} from "../tools";
+import { createAppLogger } from "../utils/app-logger";
+import { maskUserId } from "../utils/logger";
 
 const MAX_CONTEXT_ROUNDS = 3;
 const MAX_CONTEXT_MESSAGES = MAX_CONTEXT_ROUNDS * 2;
 const DEFAULT_AGENT_TIMEOUT_MS = 8000;
-const INVALID_AGENT_REPLY_TEXT = '抱歉，我暂时无法生成有效回复，请稍后再试。';
-const DEFAULT_ALARM_ANALYZE_PROMPT = '如需继续分析，请回复“分析第 1 条告警”这样的指令。';
-const MISSING_ALARM_LIST_REPLY = '当前会话里还没有可分析的告警列表，请先回复“查看当前未处理告警”。';
-const UNTREATED_ALARM_STATUS = 'Untreated';
+const INVALID_AGENT_REPLY_TEXT = "抱歉，我暂时无法生成有效回复，请稍后再试。";
+const DEFAULT_ALARM_ANALYZE_PROMPT =
+  "如需继续分析，请回复“分析第 1 条告警”这样的指令。";
+const MISSING_ALARM_LIST_REPLY =
+  "当前会话里还没有可分析的告警列表，系统运行中可能还没有生成告警。";
+const UNTREATED_ALARM_STATUS = "Untreated";
 const AMBIGUOUS_ALARM_SELECTION_REPLY =
-  '当前有多条告警候选，请明确回复“分析第 N 条告警”。';
+  "当前有多条告警候选，请明确回复“分析第 N 条告警”。";
 const CANCEL_CONFIRMATION_REPLY =
-  '好的，当前先不建单。我会保留这条告警的分析结果，如需继续建单，请重新确认。';
+  "好的，当前先不建单。我会保留这条告警的分析结果，如需继续建单，请重新确认。";
 const CONFIRMATION_PENDING_REPLY =
-  '当前正在等待你确认是否建单。请回复“确认建单”或“先不建单”。';
+  "当前正在等待你确认是否建单。请回复“确认建单”或“先不建单”。";
 const WORKORDER_CONTEXT_MISSING_REPLY =
-  '当前未配置全局建单上下文，暂时只能完成告警分析';
+  "当前未配置全局建单上下文，暂时只能完成告警分析";
 const WORKORDER_CONTEXT_INVALID_REPLY =
-  '当前建单上下文不完整，请先重新分析目标告警，再确认是否建单。';
+  "当前建单上下文不完整，请先重新分析目标告警，再确认是否建单。";
 const WORKORDER_WORKFLOW_NOT_CONFIGURED_REPLY =
-  '当前未配置工单工作流地址，暂时无法创建工单。';
-const CREATE_ALARM_SESSION_TOOL_NAME = 'create_alarm_session';
-const LIST_ALARMS_TOOL_NAME = 'list_alarms';
-const ANALYZE_ALARM_TOOL_NAME = 'analyze_alarm';
-const CREATE_WORK_ORDER_TOOL_NAME = 'create_work_order';
-const agentLogger = createAppLogger('agent');
+  "当前未配置工单工作流地址，暂时无法创建工单。";
+const CREATE_ALARM_SESSION_TOOL_NAME = "create_alarm_session";
+const LIST_ALARMS_TOOL_NAME = "list_alarms";
+const ANALYZE_ALARM_TOOL_NAME = "analyze_alarm";
+const CREATE_WORK_ORDER_TOOL_NAME = "create_work_order";
+const agentLogger = createAppLogger("agent");
 
 const AGENT_SYSTEM_PROMPT = [
-  '你是 easy-line Demo 的统一消息 Agent。',
-  '请优先使用简洁、自然的中文回复用户。',
-  '当问题依赖最新、当前、实时、今天、本周、近期变化的外部信息时，优先调用 `search.tavily` 再回答。',
-  '如果 `search.tavily` 返回搜索不可用、超时或未配置，请直接告诉用户当前无法获取最新外部信息，不要编造答案。',
-  '告警链路已经由系统状态机接管：查看告警、分析第 N 条告警、确认或取消建单会由系统显式编排。',
-  '如果用户想直接建单，但还没有完成告警分析和确认节点，请明确提示需要先查看并分析具体告警。',
-  '工单创建会在确认节点通过后由系统显式调用 `create_work_order`，不要在未确认时自行调用，也不要伪造工单结果。',
-  '当前尚未接入任务 CRUD、天气调度和 JSON 持久化，不要假装已经创建、修改、删除或执行任何任务。',
-  '对于不需要实时外部信息的稳定问题，可以直接回答。',
-].join('\n');
+  "你是 Rundo Line Agent Demo。",
+  "请根据用户输入的语言，使用对应的语言简洁自然的回复用户。",
+  "当问题依赖最新、当前、实时、今天、本周、近期变化的外部信息时，优先调用 `search.tavily` 再回答。",
+  "如果 `search.tavily` 返回搜索不可用、超时或未配置，请直接告诉用户当前无法获取最新外部信息，不要编造答案。",
+  "告警链路已经由系统状态机接管：查看告警、分析第 N 条告警、确认或取消建单会由系统显式编排。",
+  "如果用户想直接建单，但还没有完成告警分析和确认节点，请明确提示需要先查看并分析具体告警。",
+  "工单创建会在确认节点通过后由系统显式调用 `create_work_order`，不要在未确认时自行调用，也不要伪造工单结果。",
+  "当前尚未接入任务 CRUD、JSON 持久化，不要假装已经创建、修改、删除或执行任何任务。",
+  "对于不需要实时外部信息的稳定问题，可以直接回答。",
+].join("\n");
+
+const LINE_CHANNEL_RESPONSE_PROMPT = [
+  "当前渠道是 LINE 文本消息。",
+  "你的最终回复必须是纯文本。",
+  "不要使用 Markdown 标题、粗体、斜体、代码块、行内代码、引用、表格或 Markdown 链接语法。",
+  "可以用自然换行组织内容；如需列点，只能使用纯文本编号，例如“1.”、“2.”。",
+  "除非用户明确要求，否则不要输出 URL；如果必须给出链接，直接输出完整网址纯文本。",
+].join("\n");
 
 const ALARM_LIST_PATTERNS = [
   /^(请)?(帮我|给我)?(查看|查询|列出|展示|显示|看看|看一下)(当前)?(未处理)?告警$/u,
@@ -74,7 +85,8 @@ const ALARM_LIST_PATTERNS = [
 ];
 const ALARM_ANALYZE_PREFIX_PATTERN =
   /^(请)?(帮我|给我)?(分析|诊断|排查|看下|看看)/u;
-const ALARM_INDEX_PATTERN = /第\s*([0-9一二三四五六七八九十两零]+)\s*(条|个|项)/u;
+const ALARM_INDEX_PATTERN =
+  /第\s*([0-9一二三四五六七八九十两零]+)\s*(条|个|项)/u;
 const CURRENT_ALARM_PATTERN = /(这条|这一条|该告警|当前告警|当前这条)/u;
 const CONFIRM_PATTERNS = [
   /^是$/u,
@@ -100,12 +112,12 @@ const CANCEL_PATTERNS = [
   /^否先不建单$/u,
 ];
 const WORKORDER_CONTEXT_KEYS = [
-  'WORKORDER_TENANT_ID',
-  'WORKORDER_PMMS_AUTHORIZATION',
-  'WORKORDER_USER',
+  "WORKORDER_TENANT_ID",
+  "WORKORDER_PMMS_AUTHORIZATION",
+  "WORKORDER_USER",
 ] as const;
 
-export type AgentChannel = 'line_webhook' | 'chat_api';
+export type AgentChannel = "line_webhook" | "chat_api";
 
 export interface ProcessUserMessageInput {
   channel: AgentChannel;
@@ -144,18 +156,18 @@ type AgentToolName =
   | typeof ANALYZE_ALARM_TOOL_NAME
   | typeof CREATE_WORK_ORDER_TOOL_NAME;
 type WorkOrderContextKey = (typeof WORKORDER_CONTEXT_KEYS)[number];
-type PendingConfirmationAction = 'create_work_order';
-type PendingConfirmationResolution = 'cancel' | 'confirm' | null;
+type PendingConfirmationAction = "create_work_order";
+type PendingConfirmationResolution = "cancel" | "confirm" | null;
 type AlarmListIntent = {
   status: string;
 };
 type AlarmAnalyzeIntent =
   | {
-      type: 'current';
+      type: "current";
     }
   | {
       index: number;
-      type: 'index';
+      type: "index";
     };
 
 export interface WorkOrderGlobalContext {
@@ -184,10 +196,10 @@ export interface AgentSessionContext {
 }
 
 type AgentServiceErrorType =
-  | 'INVALID_ARGUMENT'
-  | 'MISSING_API_KEY'
-  | 'AGENT_INIT_FAILED'
-  | 'AGENT_INVOCATION_FAILED';
+  | "INVALID_ARGUMENT"
+  | "MISSING_API_KEY"
+  | "AGENT_INIT_FAILED"
+  | "AGENT_INVOCATION_FAILED";
 
 interface AgentServiceOptions {
   createRuntimeAgent?: (tools: AgentTools) => AgentRuntime;
@@ -202,7 +214,7 @@ export class AgentServiceError extends Error {
     public readonly cause?: unknown,
   ) {
     super(message);
-    this.name = 'AgentServiceError';
+    this.name = "AgentServiceError";
   }
 }
 
@@ -217,7 +229,7 @@ type StoredAgentSessionContext = {
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 };
 
 const cloneAlarmRecord = (
@@ -265,7 +277,7 @@ const createEmptySessionContext = (): StoredAgentSessionContext => {
 };
 
 const normalizeIntentText = (message: string): string => {
-  return message.trim().replace(/[，。！？、,.!?；;：:\s]/gu, '');
+  return message.trim().replace(/[，。！？、,.!?；;：:\s]/gu, "");
 };
 
 const parseChineseOrdinal = (token: string): number | null => {
@@ -290,23 +302,17 @@ const parseChineseOrdinal = (token: string): number | null => {
     九: 9,
   };
 
-  if (token === '十') {
+  if (token === "十") {
     return 10;
   }
 
-  const tenIndex = token.indexOf('十');
+  const tenIndex = token.indexOf("十");
 
   if (tenIndex >= 0) {
     const tensPart = token.slice(0, tenIndex);
     const onesPart = token.slice(tenIndex + 1);
-    const tens =
-      tensPart.length === 0
-        ? 1
-        : digitMap[tensPart] ?? Number.NaN;
-    const ones =
-      onesPart.length === 0
-        ? 0
-        : digitMap[onesPart] ?? Number.NaN;
+    const tens = tensPart.length === 0 ? 1 : (digitMap[tensPart] ?? Number.NaN);
+    const ones = onesPart.length === 0 ? 0 : (digitMap[onesPart] ?? Number.NaN);
 
     if (Number.isNaN(tens) || Number.isNaN(ones)) {
       return null;
@@ -328,7 +334,7 @@ const parseAlarmListIntent = (message: string): AlarmListIntent | null => {
   }
 
   return {
-    status: /未处理/u.test(trimmedMessage) ? UNTREATED_ALARM_STATUS : '',
+    status: /未处理/u.test(trimmedMessage) ? UNTREATED_ALARM_STATUS : "",
   };
 };
 
@@ -344,19 +350,22 @@ const parseAlarmAnalyzeIntent = (
   const indexMatch = trimmedMessage.match(ALARM_INDEX_PATTERN);
 
   if (indexMatch) {
-    const parsedIndex = parseChineseOrdinal(indexMatch[1] ?? '');
+    const parsedIndex = parseChineseOrdinal(indexMatch[1] ?? "");
 
     if (parsedIndex) {
       return {
-        type: 'index',
+        type: "index",
         index: parsedIndex,
       };
     }
   }
 
-  if (CURRENT_ALARM_PATTERN.test(trimmedMessage) || /告警/u.test(trimmedMessage)) {
+  if (
+    CURRENT_ALARM_PATTERN.test(trimmedMessage) ||
+    /告警/u.test(trimmedMessage)
+  ) {
     return {
-      type: 'current',
+      type: "current",
     };
   }
 
@@ -369,11 +378,11 @@ const resolvePendingConfirmationReply = (
   const normalizedMessage = normalizeIntentText(message);
 
   if (CONFIRM_PATTERNS.some((pattern) => pattern.test(normalizedMessage))) {
-    return 'confirm';
+    return "confirm";
   }
 
   if (CANCEL_PATTERNS.some((pattern) => pattern.test(normalizedMessage))) {
-    return 'cancel';
+    return "cancel";
   }
 
   return null;
@@ -385,7 +394,7 @@ const buildAlarmListReply = (result: ListAlarmsSuccess): string => {
   }
 
   return [result.alarm_summary_markdown, DEFAULT_ALARM_ANALYZE_PROMPT].join(
-    '\n\n',
+    "\n\n",
   );
 };
 
@@ -404,8 +413,8 @@ const buildAnalysisFailureReply = (failure: AlarmToolFailure): string => {
   if (failure.partial_analysis) {
     return [
       failure.partial_analysis,
-      '当前分析过程已中断，暂未进入建单确认。你可以稍后重新分析这条告警。',
-    ].join('\n\n');
+      "当前分析过程已中断，暂未进入建单确认。你可以稍后重新分析这条告警。",
+    ].join("\n\n");
   }
 
   return `当前无法完成告警分析：${failure.message}`;
@@ -417,38 +426,38 @@ const buildAnalysisReply = (
 ): string => {
   const confirmationPrompt =
     shouldOfferDispatch === false
-      ? '分析结果暂未明确建议立即建单。如果你仍要创建工单，请回复“确认建单”或“是，创建工单”；如果先不建单，请回复“先不建单”或“继续观察”。'
-      : '是否需要为这条告警创建工单？如需继续，请回复“确认建单”或“是，创建工单”；如果先不建单，请回复“先不建单”或“继续观察”。';
+      ? "分析结果暂未明确建议立即建单。如果你仍要创建工单，请回复“确认建单”或“是，创建工单”；如果先不建单，请回复“先不建单”或“继续观察”。"
+      : "是否需要为这条告警创建工单？如需继续，请回复“确认建单”或“是，创建工单”；如果先不建单，请回复“先不建单”或“继续观察”。";
 
-  return [analysisMarkdown, confirmationPrompt].join('\n\n');
+  return [analysisMarkdown, confirmationPrompt].join("\n\n");
 };
 
 const extractTextFromContentPart = (part: unknown): string => {
-  if (typeof part === 'string') {
+  if (typeof part === "string") {
     return part;
   }
 
-  if (!part || typeof part !== 'object') {
-    return '';
+  if (!part || typeof part !== "object") {
+    return "";
   }
 
-  if ('text' in part && typeof part.text === 'string') {
+  if ("text" in part && typeof part.text === "string") {
     return part.text;
   }
 
-  return '';
+  return "";
 };
 
 const normalizeResponseText = (content: unknown): string => {
-  if (typeof content === 'string') {
+  if (typeof content === "string") {
     return content.trim();
   }
 
   if (Array.isArray(content)) {
-    return content.map(extractTextFromContentPart).join('').trim();
+    return content.map(extractTextFromContentPart).join("").trim();
   }
 
-  return '';
+  return "";
 };
 
 const extractReplyFromMessages = (messages: BaseMessage[]): string => {
@@ -489,10 +498,7 @@ const extractUsedTools = (messages: BaseMessage[]): string[] => {
 
 const createChatModel = (): LanguageModelLike => {
   if (!config.llmApiKey) {
-    throw new AgentServiceError(
-      'MISSING_API_KEY',
-      'LLM_API_KEY is missing.',
-    );
+    throw new AgentServiceError("MISSING_API_KEY", "LLM_API_KEY is missing.");
   }
 
   return new ChatOpenAI({
@@ -527,25 +533,25 @@ const createRuntimeAgent = (tools: AgentTools): AgentRuntime => {
     }
 
     throw new AgentServiceError(
-      'AGENT_INIT_FAILED',
-      'Failed to initialize Agent runtime.',
+      "AGENT_INIT_FAILED",
+      "Failed to initialize Agent runtime.",
       error,
     );
   }
 };
 
 const isInvokableTool = (value: unknown): value is InvokableTool => {
-  if (!value || typeof value !== 'object') {
+  if (!value || typeof value !== "object") {
     return false;
   }
 
   const record = value as Record<string, unknown>;
 
   return (
-    'invoke' in record &&
-    typeof record.invoke === 'function' &&
-    'name' in record &&
-    typeof record.name === 'string'
+    "invoke" in record &&
+    typeof record.invoke === "function" &&
+    "name" in record &&
+    typeof record.name === "string"
   );
 };
 
@@ -553,8 +559,8 @@ const isAlarmToolFailure = (value: unknown): value is AlarmToolFailure => {
   return (
     isRecord(value) &&
     value.success === false &&
-    typeof value.message === 'string' &&
-    typeof value.error_type === 'string'
+    typeof value.message === "string" &&
+    typeof value.error_type === "string"
   );
 };
 
@@ -564,8 +570,8 @@ const isWorkOrderToolFailure = (
   return (
     isRecord(value) &&
     value.success === false &&
-    typeof value.message === 'string' &&
-    typeof value.error_type === 'string'
+    typeof value.message === "string" &&
+    typeof value.error_type === "string"
   );
 };
 
@@ -575,7 +581,7 @@ const isCreateAlarmSessionSuccess = (
   return (
     isRecord(value) &&
     value.success === true &&
-    typeof value.session_id === 'string'
+    typeof value.session_id === "string"
   );
 };
 
@@ -583,17 +589,19 @@ const isListAlarmsSuccess = (value: unknown): value is ListAlarmsSuccess => {
   return (
     isRecord(value) &&
     value.success === true &&
-    typeof value.alarm_summary_markdown === 'string' &&
+    typeof value.alarm_summary_markdown === "string" &&
     Array.isArray(value.alarms)
   );
 };
 
-const isAnalyzeAlarmSuccess = (value: unknown): value is AnalyzeAlarmSuccess => {
+const isAnalyzeAlarmSuccess = (
+  value: unknown,
+): value is AnalyzeAlarmSuccess => {
   return (
     isRecord(value) &&
     value.success === true &&
-    typeof value.analysis_markdown === 'string' &&
-    typeof value.session_id === 'string' &&
+    typeof value.analysis_markdown === "string" &&
+    typeof value.session_id === "string" &&
     Array.isArray(value.raw_events)
   );
 };
@@ -604,8 +612,8 @@ const isCreateWorkOrderSuccess = (
   return (
     isRecord(value) &&
     value.success === true &&
-    typeof value.workflow_run_id === 'string' &&
-    typeof value.mock === 'boolean'
+    typeof value.workflow_run_id === "string" &&
+    typeof value.mock === "boolean"
   );
 };
 
@@ -617,15 +625,15 @@ export const normalizeUserMessageInput = (
 
   if (!userId) {
     throw new AgentServiceError(
-      'INVALID_ARGUMENT',
-      'userId must be a non-empty string.',
+      "INVALID_ARGUMENT",
+      "userId must be a non-empty string.",
     );
   }
 
   if (!rawMessage) {
     throw new AgentServiceError(
-      'INVALID_ARGUMENT',
-      'message must be a non-empty string.',
+      "INVALID_ARGUMENT",
+      "message must be a non-empty string.",
     );
   }
 
@@ -661,11 +669,11 @@ export const getWorkOrderGlobalContextAvailability = (
   workOrderContext: WorkOrderGlobalContext,
 ): WorkOrderGlobalContextAvailability => {
   const missingKeys = WORKORDER_CONTEXT_KEYS.filter((key) => {
-    if (key === 'WORKORDER_TENANT_ID') {
+    if (key === "WORKORDER_TENANT_ID") {
       return !workOrderContext.tenantId;
     }
 
-    if (key === 'WORKORDER_PMMS_AUTHORIZATION') {
+    if (key === "WORKORDER_PMMS_AUTHORIZATION") {
       return !workOrderContext.pmmsAuthorization;
     }
 
@@ -680,32 +688,28 @@ export const getWorkOrderGlobalContextAvailability = (
 
 const formatWorkOrderField = (value: string | null | undefined): string => {
   if (!value) {
-    return '未知';
+    return "未知";
   }
 
   return value;
 };
 
-const buildWorkOrderFailureReply = (
-  failure: WorkOrderToolFailure,
-): string => {
-  if (failure.error_type === 'missing_business_context') {
+const buildWorkOrderFailureReply = (failure: WorkOrderToolFailure): string => {
+  if (failure.error_type === "missing_business_context") {
     return WORKORDER_CONTEXT_MISSING_REPLY;
   }
 
-  if (failure.error_type === 'workflow_not_configured') {
+  if (failure.error_type === "workflow_not_configured") {
     return WORKORDER_WORKFLOW_NOT_CONFIGURED_REPLY;
   }
 
   return `当前无法创建工单：${failure.message}`;
 };
 
-const buildWorkOrderSuccessReply = (
-  result: CreateWorkOrderSuccess,
-): string => {
+const buildWorkOrderSuccessReply = (result: CreateWorkOrderSuccess): string => {
   const header = result.mock
-    ? '已生成 mock 工单结果（非真实业务建单）。'
-    : '已为这条告警创建工单。';
+    ? "已生成 mock 工单结果（非真实业务建单）。"
+    : "已为这条告警创建工单。";
 
   return [
     header,
@@ -718,7 +722,7 @@ const buildWorkOrderSuccessReply = (
     `接单人: ${formatWorkOrderField(result.acceptor)}`,
     `开始时间: ${formatWorkOrderField(result.start_time)}`,
     `结束时间: ${formatWorkOrderField(result.end_time)}`,
-  ].join('\n');
+  ].join("\n");
 };
 
 export class AgentConversationMemory {
@@ -781,22 +785,22 @@ export class AgentConversationMemory {
 
 export const mapAgentErrorToAppError = (error: unknown): AppError => {
   if (!(error instanceof AgentServiceError)) {
-    return new AppError(500, 'INTERNAL_ERROR', 'Internal server error.');
+    return new AppError(500, "INTERNAL_ERROR", "Internal server error.");
   }
 
-  if (error.type === 'INVALID_ARGUMENT') {
-    return new AppError(400, 'INVALID_ARGUMENT', error.message);
+  if (error.type === "INVALID_ARGUMENT") {
+    return new AppError(400, "INVALID_ARGUMENT", error.message);
   }
 
   if (
-    error.type === 'MISSING_API_KEY' ||
-    error.type === 'AGENT_INIT_FAILED' ||
-    error.type === 'AGENT_INVOCATION_FAILED'
+    error.type === "MISSING_API_KEY" ||
+    error.type === "AGENT_INIT_FAILED" ||
+    error.type === "AGENT_INVOCATION_FAILED"
   ) {
-    return new AppError(502, 'EXTERNAL_SERVICE_ERROR', error.message);
+    return new AppError(502, "EXTERNAL_SERVICE_ERROR", error.message);
   }
 
-  return new AppError(500, 'INTERNAL_ERROR', 'Internal server error.');
+  return new AppError(500, "INTERNAL_ERROR", "Internal server error.");
 };
 
 export class AgentService {
@@ -842,7 +846,7 @@ export class AgentService {
     }
 
     throw new AgentServiceError(
-      'AGENT_INIT_FAILED',
+      "AGENT_INIT_FAILED",
       `Required tool is not registered or invokable: ${name}`,
     );
   }
@@ -882,8 +886,8 @@ export class AgentService {
 
     if (!isCreateAlarmSessionSuccess(toolResult)) {
       throw new AgentServiceError(
-        'AGENT_INVOCATION_FAILED',
-        'create_alarm_session returned an invalid response.',
+        "AGENT_INVOCATION_FAILED",
+        "create_alarm_session returned an invalid response.",
       );
     }
 
@@ -905,7 +909,7 @@ export class AgentService {
     alarm?: NormalizedAlarmRecord;
     reply?: string;
   } {
-    if (intent.type === 'index') {
+    if (intent.type === "index") {
       if (workflow.alarmList.length === 0) {
         return {
           reply: MISSING_ALARM_LIST_REPLY,
@@ -968,8 +972,8 @@ export class AgentService {
 
     if (!isListAlarmsSuccess(toolResult)) {
       throw new AgentServiceError(
-        'AGENT_INVOCATION_FAILED',
-        'list_alarms returned an invalid response.',
+        "AGENT_INVOCATION_FAILED",
+        "list_alarms returned an invalid response.",
       );
     }
 
@@ -1014,7 +1018,7 @@ export class AgentService {
 
     if (!ensuredSession.sessionId) {
       return {
-        reply: `当前无法初始化告警分析会话：${ensuredSession.failure?.message ?? 'unknown error'}`,
+        reply: `当前无法初始化告警分析会话：${ensuredSession.failure?.message ?? "unknown error"}`,
         usedTools: ensuredSession.usedTools,
       };
     }
@@ -1040,8 +1044,8 @@ export class AgentService {
 
     if (!isAnalyzeAlarmSuccess(analyzeResult)) {
       throw new AgentServiceError(
-        'AGENT_INVOCATION_FAILED',
-        'analyze_alarm returned an invalid response.',
+        "AGENT_INVOCATION_FAILED",
+        "analyze_alarm returned an invalid response.",
       );
     }
 
@@ -1050,7 +1054,7 @@ export class AgentService {
       alarmSessionId: analyzeResult.session_id,
       selectedAlarm: cloneAlarmRecord(resolvedAlarm.alarm),
       lastAnalysisMarkdown: analyzeResult.analysis_markdown,
-      pendingConfirmation: 'create_work_order',
+      pendingConfirmation: "create_work_order",
     }));
 
     return {
@@ -1087,7 +1091,7 @@ export class AgentService {
         pendingConfirmation: undefined,
         lastWorkOrderResult: {
           success: false,
-          error_type: 'missing_business_context',
+          error_type: "missing_business_context",
           message: WORKORDER_CONTEXT_MISSING_REPLY,
         },
       }));
@@ -1106,7 +1110,7 @@ export class AgentService {
         pendingConfirmation: undefined,
         lastWorkOrderResult: {
           success: false,
-          error_type: 'invalid_workflow_state',
+          error_type: "invalid_workflow_state",
           message: WORKORDER_CONTEXT_INVALID_REPLY,
         },
       }));
@@ -1139,8 +1143,8 @@ export class AgentService {
 
     if (!isCreateWorkOrderSuccess(toolResult)) {
       throw new AgentServiceError(
-        'AGENT_INVOCATION_FAILED',
-        'create_work_order returned an invalid response.',
+        "AGENT_INVOCATION_FAILED",
+        "create_work_order returned an invalid response.",
       );
     }
 
@@ -1164,10 +1168,10 @@ export class AgentService {
     const listIntent = parseAlarmListIntent(input.message);
 
     if (listIntent) {
-      agentLogger.info('alarm workflow list intent matched', {
+      agentLogger.info("alarm workflow list intent matched", {
         channel: input.channel,
         userId: maskUserId(input.userId),
-        alarmStatus: listIntent.status || 'all',
+        alarmStatus: listIntent.status || "all",
       });
 
       return this.handleAlarmListIntent(input.userId, listIntent);
@@ -1176,11 +1180,12 @@ export class AgentService {
     const analyzeIntent = parseAlarmAnalyzeIntent(input.message);
 
     if (analyzeIntent) {
-      agentLogger.info('alarm workflow analyze intent matched', {
+      agentLogger.info("alarm workflow analyze intent matched", {
         channel: input.channel,
         userId: maskUserId(input.userId),
         analyzeIntent: analyzeIntent.type,
-        analyzeIndex: analyzeIntent.type === 'index' ? analyzeIntent.index : undefined,
+        analyzeIndex:
+          analyzeIntent.type === "index" ? analyzeIntent.index : undefined,
       });
 
       return this.handleAlarmAnalyzeIntent(input.userId, analyzeIntent);
@@ -1188,14 +1193,16 @@ export class AgentService {
 
     const workflow = this.memoryStore.getAlarmWorkflow(input.userId);
 
-    if (workflow.pendingConfirmation !== 'create_work_order') {
+    if (workflow.pendingConfirmation !== "create_work_order") {
       return null;
     }
 
-    const confirmationResolution = resolvePendingConfirmationReply(input.message);
+    const confirmationResolution = resolvePendingConfirmationReply(
+      input.message,
+    );
 
-    if (confirmationResolution === 'confirm') {
-      agentLogger.info('alarm workflow confirmation approved', {
+    if (confirmationResolution === "confirm") {
+      agentLogger.info("alarm workflow confirmation approved", {
         channel: input.channel,
         userId: maskUserId(input.userId),
       });
@@ -1203,8 +1210,8 @@ export class AgentService {
       return this.handleConfirmationApprove(input.userId);
     }
 
-    if (confirmationResolution === 'cancel') {
-      agentLogger.info('alarm workflow confirmation cancelled', {
+    if (confirmationResolution === "cancel") {
+      agentLogger.info("alarm workflow confirmation cancelled", {
         channel: input.channel,
         userId: maskUserId(input.userId),
       });
@@ -1223,6 +1230,9 @@ export class AgentService {
   ): Promise<ProcessUserMessageResult> {
     const history = this.memoryStore.getUserContext(normalizedInput.userId);
     const requestMessages = [
+      ...(normalizedInput.channel === "line_webhook"
+        ? [new SystemMessage(LINE_CHANNEL_RESPONSE_PROMPT)]
+        : []),
       ...history,
       new HumanMessage(normalizedInput.message),
     ];
@@ -1245,7 +1255,7 @@ export class AgentService {
     const normalizedInput = normalizeUserMessageInput(input);
     const history = this.memoryStore.getUserContext(normalizedInput.userId);
 
-    agentLogger.info('agent request received', {
+    agentLogger.info("agent request received", {
       channel: normalizedInput.channel,
       userId: maskUserId(normalizedInput.userId),
       webhookEventId: normalizedInput.webhookEventId,
@@ -1256,7 +1266,8 @@ export class AgentService {
     });
 
     try {
-      const workflowResult = await this.tryProcessAlarmWorkflow(normalizedInput);
+      const workflowResult =
+        await this.tryProcessAlarmWorkflow(normalizedInput);
       const agentResult =
         workflowResult ?? (await this.processWithRuntimeAgent(normalizedInput));
       const nextContext = this.memoryStore.saveConversationTurn(
@@ -1265,7 +1276,7 @@ export class AgentService {
         agentResult.reply,
       );
 
-      agentLogger.info('agent response generated', {
+      agentLogger.info("agent response generated", {
         channel: normalizedInput.channel,
         userId: maskUserId(normalizedInput.userId),
         webhookEventId: normalizedInput.webhookEventId,
@@ -1282,13 +1293,13 @@ export class AgentService {
         error instanceof AgentServiceError
           ? error
           : new AgentServiceError(
-              'AGENT_INVOCATION_FAILED',
-              'Failed to generate agent response.',
+              "AGENT_INVOCATION_FAILED",
+              "Failed to generate agent response.",
               error,
             );
 
       agentLogger.error(
-        'agent request failed',
+        "agent request failed",
         {
           channel: normalizedInput.channel,
           userId: maskUserId(normalizedInput.userId),

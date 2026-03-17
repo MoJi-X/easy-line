@@ -16,6 +16,7 @@ const channelSecret = process.env.LINE_CHANNEL_SECRET;
 const FALLBACK_REPLY_TEXT = '抱歉，我现在暂时无法处理你的消息，请稍后再试。';
 const webhookLogger = createAppLogger('webhook');
 const EVENT_DEDUP_TTL_MS = 20 * 60 * 1000;
+const WEBHOOK_LOADING_SECONDS = 15;
 
 type WebhookEventProcessingStatus = 'processing' | 'completed' | 'failed';
 
@@ -206,6 +207,12 @@ const handleEvent = async (event: WebhookEvent): Promise<void> => {
   });
 
   try {
+    await lineService.showLoadingIndicator({
+      userId: textMessage.userId,
+      webhookEventId: textMessage.webhookEventId,
+      loadingSeconds: WEBHOOK_LOADING_SECONDS,
+    });
+
     const agentResult = await agentService.processUserMessage({
       channel: 'line_webhook',
       userId: textMessage.userId,
