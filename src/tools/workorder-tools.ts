@@ -208,6 +208,56 @@ const resolveAlarmDeviceSn = (
   );
 };
 
+const resolveAlarmSiteName = (
+  alarm: Record<string, unknown>,
+): string | undefined => {
+  const rawAlarm = getRawAlarmRecord(alarm);
+
+  return (
+    pickString(rawAlarm, [["site_name"], ["siteName"]]) ??
+    pickString(alarm, [
+      ["site_name"],
+      ["siteName"],
+      ["station_name"],
+      ["stationName"],
+    ])
+  );
+};
+
+const resolveAlarmType = (alarm: Record<string, unknown>): string | undefined => {
+  const rawAlarm = getRawAlarmRecord(alarm);
+
+  return (
+    pickString(rawAlarm, [["alarm_type"], ["alarmType"]]) ??
+    pickString(alarm, [["alarm_type"], ["alarmType"]])
+  );
+};
+
+const resolveAlarmTypeName = (
+  alarm: Record<string, unknown>,
+): string | undefined => {
+  const rawAlarm = getRawAlarmRecord(alarm);
+
+  return (
+    pickString(rawAlarm, [
+      ["alarm_type_name"],
+      ["alarmTypeName"],
+      ["alarm_name"],
+      ["alarmName"],
+      ["alarm_type"],
+      ["alarmType"],
+    ]) ??
+    pickString(alarm, [
+      ["alarm_type_name"],
+      ["alarmTypeName"],
+      ["alarm_name"],
+      ["alarmName"],
+      ["alarm_type"],
+      ["alarmType"],
+    ])
+  );
+};
+
 const buildToolFailure = (
   errorType: WorkOrderToolFailureType,
   message: string,
@@ -317,22 +367,8 @@ const buildFaultDescription = (
   analysisMarkdown: string,
 ): string => {
   const deviceSn = String(resolveAlarmDeviceSn(alarm) ?? "未知设备");
-  const siteName =
-    pickString(alarm, [
-      ["site_name"],
-      ["siteName"],
-      ["station_name"],
-      ["stationName"],
-    ]) ?? "未知站点";
-  const alarmTypeName =
-    pickString(alarm, [
-      ["alarm_type_name"],
-      ["alarmTypeName"],
-      ["alarm_name"],
-      ["alarmName"],
-      ["alarm_type"],
-      ["alarmType"],
-    ]) ?? "告警";
+  const siteName = resolveAlarmSiteName(alarm) ?? "未知站点";
+  const alarmTypeName = resolveAlarmTypeName(alarm) ?? "告警";
   const alarmTime =
     pickString(alarm, [
       ["created_at"],
@@ -400,23 +436,9 @@ const buildMockWorkOrderSuccess = (
     pickStringOrNumber(input.alarm, [["id"], ["alarm_id"], ["alarmId"]]) ??
       "unknown-alarm",
   );
-  const siteName =
-    pickString(input.alarm, [
-      ["site_name"],
-      ["siteName"],
-      ["station_name"],
-      ["stationName"],
-    ]) ?? "未知站点";
+  const siteName = resolveAlarmSiteName(input.alarm) ?? "未知站点";
   const deviceSn = String(resolveAlarmDeviceSn(input.alarm) ?? "未知设备");
-  const alarmTypeName =
-    pickString(input.alarm, [
-      ["alarm_type_name"],
-      ["alarmTypeName"],
-      ["alarm_name"],
-      ["alarmName"],
-      ["alarm_type"],
-      ["alarmType"],
-    ]) ?? "告警处理";
+  const alarmTypeName = resolveAlarmTypeName(input.alarm) ?? "告警处理";
   const now = new Date();
   const endAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
   const safeAlarmId = sanitizeIdentifier(alarmId);
@@ -460,16 +482,8 @@ const buildWorkflowInputs = (
     alarm_category:
       pickString(input.alarm, [["alarm_category"], ["alarmCategory"]]) ??
       DEFAULT_ALARM_CATEGORY,
-    alarm_type:
-      pickString(input.alarm, [["alarm_type"], ["alarmType"]]) ??
-      "unknown_alarm",
-    alarm_type_name:
-      pickString(input.alarm, [
-        ["alarm_type_name"],
-        ["alarmTypeName"],
-        ["alarm_name"],
-        ["alarmName"],
-      ]) ?? "未知告警",
+    alarm_type: resolveAlarmType(input.alarm) ?? "unknown_alarm",
+    alarm_type_name: resolveAlarmTypeName(input.alarm) ?? "未知告警",
     fault_code:
       pickStringOrNumber(input.alarm, [
         ["fault_code"],
@@ -478,13 +492,7 @@ const buildWorkflowInputs = (
         ["alarmCode"],
       ]) ?? "",
     fault_desc: buildFaultDescription(input.alarm, input.analysis_markdown),
-    site_name:
-      pickString(input.alarm, [
-        ["site_name"],
-        ["siteName"],
-        ["station_name"],
-        ["stationName"],
-      ]) ?? "未知站点",
+    site_name: resolveAlarmSiteName(input.alarm) ?? "未知站点",
     pmms_authorization: runtimeConfig.workorderPmmsAuthorization as string,
   };
 };
