@@ -11,6 +11,10 @@ import { createAgent } from "langchain";
 import { config } from "../config";
 import { AppError } from "../errors/app-error";
 import {
+  taskRepository as defaultTaskRepository,
+  type TaskRepository,
+} from "./task-repository";
+import {
   type AlarmToolFailure,
   type AnalyzeAlarmSuccess,
   type CreateAlarmSessionSuccess,
@@ -26,6 +30,13 @@ import {
   type AgentTool,
   type ToolRegistry,
 } from "../tools";
+import {
+  TASK_CREATE_TOOL_NAME,
+  TASK_LIST_TOOL_NAME,
+  buildTaskCreatedReply,
+  buildTaskListReply,
+  tryHandleTaskCommand,
+} from "../tools/task-tools";
 import { createAppLogger } from "../utils/app-logger";
 import { maskUserId } from "../utils/logger";
 
@@ -50,6 +61,12 @@ const WORKORDER_CONTEXT_INVALID_REPLY =
   "当前建单上下文不完整，请先重新分析目标告警，再确认是否建单。";
 const WORKORDER_WORKFLOW_NOT_CONFIGURED_REPLY =
   "当前未配置工单工作流地址，暂时无法创建工单。";
+const TASK_CREATE_REPLY_MISSING_BOTH =
+  "要创建告警定时任务，还需要补充告警范围和执行时间，例如“每天 08:00 获取当前未处理告警信息”。系统会自动转换为 6 字段 cron。";
+const TASK_CREATE_REPLY_MISSING_SCOPE =
+  "还缺少告警范围，请补充例如“当前未处理告警”或“当前告警信息”。";
+const TASK_CREATE_REPLY_MISSING_TIME =
+  "还缺少执行时间，请补充例如“08:00”或“每天早上 8 点”。系统会自动转换为 6 字段 cron。";
 const CREATE_ALARM_SESSION_TOOL_NAME = "create_alarm_session";
 const LIST_ALARMS_TOOL_NAME = "list_alarms";
 const ANALYZE_ALARM_TOOL_NAME = "analyze_alarm";
@@ -62,9 +79,9 @@ const AGENT_SYSTEM_PROMPT = [
   "当问题依赖最新、当前、实时、今天、本周、近期变化的外部信息时，优先调用 `search.tavily` 再回答。",
   "如果 `search.tavily` 返回搜索不可用、超时或未配置，请直接告诉用户当前无法获取最新外部信息，不要编造答案。",
   "告警链路已经由系统状态机接管：查看告警、分析第 N 条告警、确认或取消建单会由系统显式编排。",
+  "任务链路已经接入：`/task` 命令以及创建、查询告警定时任务的自然语言请求会由系统显式编排。",
   "如果用户想直接建单，但还没有完成告警分析和确认节点，请明确提示需要先查看并分析具体告警。",
   "工单创建会在确认节点通过后由系统显式调用 `create_work_order`，不要在未确认时自行调用，也不要伪造工单结果。",
-  "当前尚未接入任务 CRUD、JSON 持久化，不要假装已经创建、修改、删除或执行任何任务。",
   "对于不需要实时外部信息的稳定问题，可以直接回答。",
 ].join("\n");
 
@@ -151,6 +168,8 @@ export type AgentRuntime = {
 
 type AgentTools = AgentTool[];
 type AgentToolName =
+  | typeof TASK_CREATE_TOOL_NAME
+  | typeof TASK_LIST_TOOL_NAME
   | typeof CREATE_ALARM_SESSION_TOOL_NAME
   | typeof LIST_ALARMS_TOOL_NAME
   | typeof ANALYZE_ALARM_TOOL_NAME
@@ -169,6 +188,16 @@ type AlarmAnalyzeIntent =
       index: number;
       type: "index";
     };
+type TaskListIntent = {
+  type: "list";
+};
+type TaskCreateDraft = {
+  alertScope?: string;
+  cron?: string;
+};
+type TaskCreateIntent = TaskCreateDraft & {
+  type: "create";
+};
 
 export interface WorkOrderGlobalContext {
   pmmsAuthorization?: string;
@@ -190,9 +219,14 @@ export interface AgentAlarmWorkflowState {
   selectedAlarm?: NormalizedAlarmRecord;
 }
 
+export interface AgentTaskWorkflowState {
+  pendingCreateDraft?: TaskCreateDraft;
+}
+
 export interface AgentSessionContext {
   alarmWorkflow: AgentAlarmWorkflowState;
   messages: BaseMessage[];
+  taskWorkflow: AgentTaskWorkflowState;
 }
 
 type AgentServiceErrorType =
@@ -204,6 +238,7 @@ type AgentServiceErrorType =
 interface AgentServiceOptions {
   createRuntimeAgent?: (tools: AgentTools) => AgentRuntime;
   memoryStore?: AgentConversationMemory;
+  taskRepository?: TaskRepository;
   toolRegistry?: ToolRegistry<AgentTool>;
 }
 
@@ -226,6 +261,7 @@ type InvokableTool = {
 type StoredAgentSessionContext = {
   alarmWorkflow: AgentAlarmWorkflowState;
   messages: BaseMessage[];
+  taskWorkflow: AgentTaskWorkflowState;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -263,16 +299,31 @@ const cloneAlarmWorkflow = (
   };
 };
 
+const cloneTaskWorkflow = (
+  workflow?: AgentTaskWorkflowState,
+): AgentTaskWorkflowState => {
+  return {
+    pendingCreateDraft: workflow?.pendingCreateDraft
+      ? { ...workflow.pendingCreateDraft }
+      : undefined,
+  };
+};
+
 const createEmptyAlarmWorkflow = (): AgentAlarmWorkflowState => {
   return {
     alarmList: [],
   };
 };
 
+const createEmptyTaskWorkflow = (): AgentTaskWorkflowState => {
+  return {};
+};
+
 const createEmptySessionContext = (): StoredAgentSessionContext => {
   return {
     messages: [],
     alarmWorkflow: createEmptyAlarmWorkflow(),
+    taskWorkflow: createEmptyTaskWorkflow(),
   };
 };
 
@@ -370,6 +421,148 @@ const parseAlarmAnalyzeIntent = (
   }
 
   return null;
+};
+
+const buildDailyCronExpression = (
+  hours: number,
+  minutes: number,
+): string | null => {
+  if (
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null;
+  }
+
+  return `0 ${minutes} ${hours} * * *`;
+};
+
+const extractCronFromMessage = (message: string): string | undefined => {
+  const directTimeMatch = message.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/u);
+
+  if (directTimeMatch) {
+    const hours = Number(directTimeMatch[1]);
+    const minutes = Number(directTimeMatch[2]);
+    return buildDailyCronExpression(hours, minutes) ?? undefined;
+  }
+
+  const chineseTimeMatch = message.match(
+    /(凌晨|早上|上午|中午|下午|晚上)?\s*([0-9]{1,2})\s*点(?:\s*([0-9]{1,2})\s*分?)?/u,
+  );
+
+  if (!chineseTimeMatch) {
+    return undefined;
+  }
+
+  const period = chineseTimeMatch[1] ?? "";
+  let hours = Number(chineseTimeMatch[2] ?? "0");
+  const minutes = Number(chineseTimeMatch[3] ?? "0");
+
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) {
+    return undefined;
+  }
+
+  if (period === "凌晨") {
+    if (hours === 12) {
+      hours = 0;
+    }
+  } else if (period === "中午") {
+    if (hours >= 1 && hours <= 10) {
+      hours += 12;
+    }
+  } else if (period === "下午" || period === "晚上") {
+    if (hours >= 1 && hours <= 11) {
+      hours += 12;
+    }
+  } else if ((period === "早上" || period === "上午") && hours === 12) {
+    hours = 0;
+  }
+
+  return buildDailyCronExpression(hours, minutes) ?? undefined;
+};
+
+const extractTaskAlertScope = (message: string): string | undefined => {
+  if (/未处理/u.test(message)) {
+    return "当前未处理告警";
+  }
+
+  if (/(全部|所有).{0,3}告警/u.test(message)) {
+    return "当前告警信息";
+  }
+
+  if (/告警信息/u.test(message) && /(任务|定时|提醒|获取|拉取|查询|查看)/u.test(message)) {
+    return "当前告警信息";
+  }
+
+  return undefined;
+};
+
+const isTaskCreateMessage = (message: string): boolean => {
+  if (!/告警/u.test(message)) {
+    return false;
+  }
+
+  return /(每天|每日|定时|提醒|创建|新建|增加|设一个|设置|获取|拉取|推送)/u.test(
+    message,
+  );
+};
+
+const parseTaskListIntent = (message: string): TaskListIntent | null => {
+  const trimmedMessage = message.trim();
+
+  if (!/告警/u.test(trimmedMessage)) {
+    return null;
+  }
+
+  if (!/(任务|定时|提醒)/u.test(trimmedMessage)) {
+    return null;
+  }
+
+  if (!/(哪些|列表|查看|查询|列出|展示|看看|看下|有什么)/u.test(trimmedMessage)) {
+    return null;
+  }
+
+  return {
+    type: "list",
+  };
+};
+
+const parseTaskCreateIntent = (message: string): TaskCreateIntent | null => {
+  if (!isTaskCreateMessage(message)) {
+    return null;
+  }
+
+  return {
+    type: "create",
+    alertScope: extractTaskAlertScope(message),
+    cron: extractCronFromMessage(message),
+  };
+};
+
+const mergeTaskCreateDraft = (
+  draft: TaskCreateDraft | undefined,
+  message: string,
+): TaskCreateDraft => {
+  return {
+    alertScope: draft?.alertScope ?? extractTaskAlertScope(message),
+    cron: draft?.cron ?? extractCronFromMessage(message),
+  };
+};
+
+const buildTaskCreateMissingReply = (draft: TaskCreateDraft): string => {
+  if (!draft.alertScope && !draft.cron) {
+    return TASK_CREATE_REPLY_MISSING_BOTH;
+  }
+
+  if (!draft.alertScope) {
+    return TASK_CREATE_REPLY_MISSING_SCOPE;
+  }
+
+  return TASK_CREATE_REPLY_MISSING_TIME;
 };
 
 const resolvePendingConfirmationReply = (
@@ -749,11 +942,16 @@ export class AgentConversationMemory {
     return {
       messages: [...session.messages],
       alarmWorkflow: cloneAlarmWorkflow(session.alarmWorkflow),
+      taskWorkflow: cloneTaskWorkflow(session.taskWorkflow),
     };
   }
 
   getAlarmWorkflow(userId: string): AgentAlarmWorkflowState {
     return this.getSessionContext(userId).alarmWorkflow;
+  }
+
+  getTaskWorkflow(userId: string): AgentTaskWorkflowState {
+    return this.getSessionContext(userId).taskWorkflow;
   }
 
   updateAlarmWorkflow(
@@ -765,6 +963,17 @@ export class AgentConversationMemory {
 
     session.alarmWorkflow = cloneAlarmWorkflow(nextWorkflow);
     return cloneAlarmWorkflow(session.alarmWorkflow);
+  }
+
+  updateTaskWorkflow(
+    userId: string,
+    updater: (workflow: AgentTaskWorkflowState) => AgentTaskWorkflowState,
+  ): AgentTaskWorkflowState {
+    const session = this.getOrCreateSession(userId);
+    const nextWorkflow = updater(cloneTaskWorkflow(session.taskWorkflow));
+
+    session.taskWorkflow = cloneTaskWorkflow(nextWorkflow);
+    return cloneTaskWorkflow(session.taskWorkflow);
   }
 
   saveConversationTurn(
@@ -810,10 +1019,13 @@ export class AgentService {
 
   private readonly memoryStore: AgentConversationMemory;
 
+  private readonly taskRepository: TaskRepository;
+
   private readonly toolRegistry: ToolRegistry<AgentTool>;
 
   constructor(options: AgentServiceOptions = {}) {
     this.memoryStore = options.memoryStore ?? new AgentConversationMemory();
+    this.taskRepository = options.taskRepository ?? defaultTaskRepository;
     this.toolRegistry = options.toolRegistry ?? createToolRegistry();
     this.createRuntimeAgent = options.createRuntimeAgent ?? createRuntimeAgent;
   }
@@ -851,11 +1063,129 @@ export class AgentService {
     );
   }
 
-  private async invokeAlarmTool(
+  private async invokeTool(
     name: AgentToolName,
     input: unknown,
   ): Promise<unknown> {
     return this.getRequiredTool(name).invoke(input);
+  }
+
+  private handleTaskListIntent(userId: string): ProcessUserMessageResult {
+    const tasks = this.taskRepository.listTasksByOwner(userId);
+
+    this.memoryStore.updateTaskWorkflow(userId, () => ({
+      pendingCreateDraft: undefined,
+    }));
+
+    return {
+      reply: buildTaskListReply(tasks),
+      usedTools: [TASK_LIST_TOOL_NAME],
+    };
+  }
+
+  private handleTaskCreateDraft(
+    userId: string,
+    draft: TaskCreateDraft,
+  ): ProcessUserMessageResult {
+    if (!draft.alertScope || !draft.cron) {
+      this.memoryStore.updateTaskWorkflow(userId, () => ({
+        pendingCreateDraft: { ...draft },
+      }));
+
+      return {
+        reply: buildTaskCreateMissingReply(draft),
+        usedTools: [],
+      };
+    }
+
+    try {
+      const task = this.taskRepository.createTask({
+        userId,
+        alertScope: draft.alertScope,
+        cron: draft.cron,
+        source: "natural_language",
+      });
+
+      this.memoryStore.updateTaskWorkflow(userId, () => ({
+        pendingCreateDraft: undefined,
+      }));
+
+      return {
+        reply: buildTaskCreatedReply(task),
+        usedTools: [TASK_CREATE_TOOL_NAME],
+      };
+    } catch (error) {
+      if (error instanceof AppError) {
+        return {
+          reply: error.message,
+          usedTools: [TASK_CREATE_TOOL_NAME],
+        };
+      }
+
+      throw error;
+    }
+  }
+
+  private tryProcessTaskWorkflow(
+    input: NormalizedUserMessageInput,
+  ): ProcessUserMessageResult | null {
+    const commandResult = tryHandleTaskCommand(
+      {
+        userId: input.userId,
+        message: input.message,
+      },
+      {
+        taskRepository: this.taskRepository,
+      },
+    );
+
+    if (commandResult) {
+      agentLogger.info("task workflow command matched", {
+        channel: input.channel,
+        userId: maskUserId(input.userId),
+      });
+      this.memoryStore.updateTaskWorkflow(input.userId, () => ({
+        pendingCreateDraft: undefined,
+      }));
+      return commandResult;
+    }
+
+    const currentTaskWorkflow = this.memoryStore.getTaskWorkflow(input.userId);
+
+    if (currentTaskWorkflow.pendingCreateDraft) {
+      agentLogger.info("task workflow pending draft continued", {
+        channel: input.channel,
+        userId: maskUserId(input.userId),
+      });
+      return this.handleTaskCreateDraft(
+        input.userId,
+        mergeTaskCreateDraft(currentTaskWorkflow.pendingCreateDraft, input.message),
+      );
+    }
+
+    const taskListIntent = parseTaskListIntent(input.message);
+
+    if (taskListIntent) {
+      agentLogger.info("task workflow list intent matched", {
+        channel: input.channel,
+        userId: maskUserId(input.userId),
+      });
+      return this.handleTaskListIntent(input.userId);
+    }
+
+    const taskCreateIntent = parseTaskCreateIntent(input.message);
+
+    if (taskCreateIntent) {
+      agentLogger.info("task workflow create intent matched", {
+        channel: input.channel,
+        userId: maskUserId(input.userId),
+        hasAlertScope: Boolean(taskCreateIntent.alertScope),
+        hasCron: Boolean(taskCreateIntent.cron),
+      });
+      return this.handleTaskCreateDraft(input.userId, taskCreateIntent);
+    }
+
+    return null;
   }
 
   private async ensureAlarmSessionId(userId: string): Promise<{
@@ -872,7 +1202,7 @@ export class AgentService {
       };
     }
 
-    const toolResult = await this.invokeAlarmTool(
+    const toolResult = await this.invokeTool(
       CREATE_ALARM_SESSION_TOOL_NAME,
       {},
     );
@@ -959,7 +1289,7 @@ export class AgentService {
     userId: string,
     intent: AlarmListIntent,
   ): Promise<ProcessUserMessageResult> {
-    const toolResult = await this.invokeAlarmTool(LIST_ALARMS_TOOL_NAME, {
+    const toolResult = await this.invokeTool(LIST_ALARMS_TOOL_NAME, {
       status: intent.status,
     });
 
@@ -1023,7 +1353,7 @@ export class AgentService {
       };
     }
 
-    const analyzeResult = await this.invokeAlarmTool(ANALYZE_ALARM_TOOL_NAME, {
+    const analyzeResult = await this.invokeTool(ANALYZE_ALARM_TOOL_NAME, {
       session_id: ensuredSession.sessionId,
       alarm: { ...resolvedAlarm.alarm.raw },
     });
@@ -1121,7 +1451,7 @@ export class AgentService {
       };
     }
 
-    const toolResult = await this.invokeAlarmTool(CREATE_WORK_ORDER_TOOL_NAME, {
+    const toolResult = await this.invokeTool(CREATE_WORK_ORDER_TOOL_NAME, {
       alarm: { ...workflow.selectedAlarm.raw },
       analysis_markdown: workflow.lastAnalysisMarkdown,
     });
@@ -1266,8 +1596,9 @@ export class AgentService {
     });
 
     try {
+      const taskWorkflowResult = this.tryProcessTaskWorkflow(normalizedInput);
       const workflowResult =
-        await this.tryProcessAlarmWorkflow(normalizedInput);
+        taskWorkflowResult ?? (await this.tryProcessAlarmWorkflow(normalizedInput));
       const agentResult =
         workflowResult ?? (await this.processWithRuntimeAgent(normalizedInput));
       const nextContext = this.memoryStore.saveConversationTurn(
@@ -1285,6 +1616,7 @@ export class AgentService {
         contextMessageCount: nextContext.length,
         replyLength: agentResult.reply.length,
         workflowHandled: Boolean(workflowResult),
+        taskWorkflowHandled: Boolean(taskWorkflowResult),
       });
 
       return agentResult;

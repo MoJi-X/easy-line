@@ -6,6 +6,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
+import cron from 'node-cron';
 
 import { AppError, type AppErrorDetail } from '../errors/app-error';
 import { createAppLogger } from '../utils/app-logger';
@@ -16,8 +17,8 @@ export const TASKS_CONFIG_PATH = path.resolve(
   'src/config/tasks.json',
 );
 
-export const DAILY_WEATHER_TASK_TYPE = 'daily_weather';
-const DAILY_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
+export const ALARM_FETCH_TASK_TYPE = 'alarm_info_fetch';
+const CRON_SEGMENT_COUNT = 6;
 const taskRepositoryLogger = createAppLogger('task-repository');
 const TASK_SOURCE_VALUES = [
   'api',
@@ -26,16 +27,21 @@ const TASK_SOURCE_VALUES = [
   'slash_command',
 ] as const;
 
+type TaskCollectionChangeAction = 'create' | 'delete' | 'reload' | 'update';
+
 export type TaskSource = (typeof TASK_SOURCE_VALUES)[number];
 export type RuntimeTaskSource = Exclude<TaskSource, 'api_seed'>;
+export type TaskRepositoryListener = (
+  event: TaskRepositoryChangeEvent,
+) => void;
 
-export interface DailyWeatherTask {
+export interface AlarmFetchTask {
   id: string;
-  type: typeof DAILY_WEATHER_TASK_TYPE;
+  type: typeof ALARM_FETCH_TASK_TYPE;
   name: string;
   ownerUserId: string;
-  city: string;
-  dailyTime: string;
+  alertScope: string;
+  cron: string;
   enabled: boolean;
   source: TaskSource;
   createdAt: string;
@@ -43,13 +49,13 @@ export interface DailyWeatherTask {
 }
 
 interface TasksFile {
-  tasks: DailyWeatherTask[];
+  tasks: AlarmFetchTask[];
 }
 
 export interface CreateTaskInput {
   userId: string;
-  city: string;
-  dailyTime: string;
+  alertScope: string;
+  cron: string;
   enabled?: boolean;
   source?: RuntimeTaskSource;
 }
@@ -57,9 +63,15 @@ export interface CreateTaskInput {
 export interface UpdateTaskInput {
   userId: string;
   taskId: string;
-  city?: string;
-  dailyTime?: string;
+  alertScope?: string;
+  cron?: string;
   enabled?: boolean;
+}
+
+export interface TaskRepositoryChangeEvent {
+  action: TaskCollectionChangeAction;
+  task?: AlarmFetchTask;
+  tasks: AlarmFetchTask[];
 }
 
 interface TaskRepositoryOptions {
@@ -68,15 +80,15 @@ interface TaskRepositoryOptions {
   generateId?: () => string;
 }
 
-const cloneTask = (task: DailyWeatherTask): DailyWeatherTask => {
+const cloneTask = (task: AlarmFetchTask): AlarmFetchTask => {
   return { ...task };
 };
 
-const buildTaskName = (city: string): string => {
-  return `${city}天气提醒`;
+const buildTaskName = (alertScope: string): string => {
+  return `${alertScope}定时获取`;
 };
 
-const sortTasks = (tasks: DailyWeatherTask[]): DailyWeatherTask[] => {
+const sortTasks = (tasks: AlarmFetchTask[]): AlarmFetchTask[] => {
   return [...tasks].sort((left, right) => {
     const createdAtCompare = left.createdAt.localeCompare(right.createdAt);
 
@@ -119,16 +131,55 @@ const assertNonEmptyString = (value: unknown, field: string): string => {
   return normalizedValue;
 };
 
-const assertDailyTime = (value: unknown): string => {
-  const normalizedValue = assertNonEmptyString(value, 'dailyTime');
+export const normalizeAlertScope = (value: unknown): string => {
+  const normalizedValue = assertNonEmptyString(value, 'alertScope')
+    .replace(/\s+/g, '')
+    .replace(/[，。！？、,.!?]/gu, '');
 
-  if (!DAILY_TIME_PATTERN.test(normalizedValue)) {
-    throw buildInvalidArgumentError('dailyTime must use HH:mm format.', [
+  if (
+    /^(untreated|未处理|当前未处理|未处理告警|当前未处理告警)$/iu.test(
+      normalizedValue,
+    )
+  ) {
+    return '当前未处理告警';
+  }
+
+  if (
+    /^(all|全部|所有|全部告警|所有告警|当前告警|当前告警信息|告警信息)$/iu.test(
+      normalizedValue,
+    )
+  ) {
+    return '当前告警信息';
+  }
+
+  return normalizedValue;
+};
+
+const buildCronValidationError = (): AppError => {
+  return buildInvalidArgumentError(
+    'cron must use a valid 6-field cron expression, for example "0 0 8 * * *".',
+    [
       {
-        field: 'dailyTime',
-        message: 'Expected HH:mm.',
+        field: 'cron',
+        message:
+          'Expected a valid 6-field cron expression such as "0 0 8 * * *".',
       },
-    ]);
+    ],
+  );
+};
+
+export const normalizeCronExpression = (value: unknown): string => {
+  const normalizedValue = assertNonEmptyString(value, 'cron').replace(
+    /\s+/g,
+    ' ',
+  );
+
+  if (normalizedValue.split(' ').length !== CRON_SEGMENT_COUNT) {
+    throw buildCronValidationError();
+  }
+
+  if (!cron.validate(normalizedValue)) {
+    throw buildCronValidationError();
   }
 
   return normalizedValue;
@@ -180,7 +231,7 @@ const assertIsoTimestamp = (value: unknown, field: string): string => {
   return normalizedValue;
 };
 
-const normalizeLoadedTask = (record: unknown): DailyWeatherTask => {
+const normalizeLoadedTask = (record: unknown): AlarmFetchTask => {
   if (!record || typeof record !== 'object') {
     throw new Error('task record must be an object.');
   }
@@ -188,8 +239,8 @@ const normalizeLoadedTask = (record: unknown): DailyWeatherTask => {
   const data = record as Record<string, unknown>;
   const type = assertNonEmptyString(data.type, 'type');
 
-  if (type !== DAILY_WEATHER_TASK_TYPE) {
-    throw new Error('type must be daily_weather.');
+  if (type !== ALARM_FETCH_TASK_TYPE) {
+    throw new Error(`type must be ${ALARM_FETCH_TASK_TYPE}.`);
   }
 
   const source = assertNonEmptyString(data.source, 'source');
@@ -200,13 +251,15 @@ const normalizeLoadedTask = (record: unknown): DailyWeatherTask => {
     );
   }
 
+  const alertScope = normalizeAlertScope(data.alertScope);
+
   return {
     id: assertNonEmptyString(data.id, 'id'),
-    type: DAILY_WEATHER_TASK_TYPE,
-    name: assertNonEmptyString(data.name, 'name'),
+    type: ALARM_FETCH_TASK_TYPE,
+    name: buildTaskName(alertScope),
     ownerUserId: assertNonEmptyString(data.ownerUserId, 'ownerUserId'),
-    city: assertNonEmptyString(data.city, 'city'),
-    dailyTime: assertDailyTime(data.dailyTime),
+    alertScope,
+    cron: normalizeCronExpression(data.cron),
     enabled: assertBoolean(data.enabled, 'enabled'),
     source,
     createdAt: assertIsoTimestamp(data.createdAt, 'createdAt'),
@@ -215,7 +268,9 @@ const normalizeLoadedTask = (record: unknown): DailyWeatherTask => {
 };
 
 export class TaskRepository {
-  private tasksById = new Map<string, DailyWeatherTask>();
+  private tasksById = new Map<string, AlarmFetchTask>();
+
+  private readonly listeners = new Set<TaskRepositoryListener>();
 
   private readonly filePath: string;
 
@@ -227,12 +282,20 @@ export class TaskRepository {
     this.filePath = options.filePath ?? TASKS_CONFIG_PATH;
     this.now = options.now ?? (() => new Date());
     this.generateId =
-      options.generateId ?? (() => `weather-${randomUUID().slice(0, 8)}`);
+      options.generateId ?? (() => `alarm-task-${randomUUID().slice(0, 8)}`);
 
     this.loadFromDisk();
   }
 
-  listTasksByOwner(userId: string): DailyWeatherTask[] {
+  subscribe(listener: TaskRepositoryListener): () => void {
+    this.listeners.add(listener);
+
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  listTasksByOwner(userId: string): AlarmFetchTask[] {
     const normalizedUserId = assertNonEmptyString(userId, 'userId');
 
     return sortTasks(
@@ -242,16 +305,16 @@ export class TaskRepository {
     );
   }
 
-  listAllTasks(): DailyWeatherTask[] {
+  listAllTasks(): AlarmFetchTask[] {
     return sortTasks(
       Array.from(this.tasksById.values()).map((task) => cloneTask(task)),
     );
   }
 
-  createTask(input: CreateTaskInput): DailyWeatherTask {
+  createTask(input: CreateTaskInput): AlarmFetchTask {
     const ownerUserId = assertNonEmptyString(input.userId, 'userId');
-    const city = assertNonEmptyString(input.city, 'city');
-    const dailyTime = assertDailyTime(input.dailyTime);
+    const alertScope = normalizeAlertScope(input.alertScope);
+    const taskCron = normalizeCronExpression(input.cron);
     const enabled = input.enabled ?? true;
 
     if (typeof enabled !== 'boolean') {
@@ -267,13 +330,13 @@ export class TaskRepository {
       ? assertRuntimeTaskSource(input.source)
       : 'api';
     const timestamp = this.now().toISOString();
-    const task: DailyWeatherTask = {
+    const task: AlarmFetchTask = {
       id: this.generateId(),
-      type: DAILY_WEATHER_TASK_TYPE,
-      name: buildTaskName(city),
+      type: ALARM_FETCH_TASK_TYPE,
+      name: buildTaskName(alertScope),
       ownerUserId,
-      city,
-      dailyTime,
+      alertScope,
+      cron: taskCron,
       enabled,
       source,
       createdAt: timestamp,
@@ -287,18 +350,18 @@ export class TaskRepository {
     return cloneTask(task);
   }
 
-  updateTask(input: UpdateTaskInput): DailyWeatherTask {
+  updateTask(input: UpdateTaskInput): AlarmFetchTask {
     const ownerUserId = assertNonEmptyString(input.userId, 'userId');
     const taskId = assertNonEmptyString(input.taskId, 'taskId');
     const currentTask = this.getOwnedTask(taskId, ownerUserId);
 
     if (
-      input.city === undefined &&
-      input.dailyTime === undefined &&
+      input.alertScope === undefined &&
+      input.cron === undefined &&
       input.enabled === undefined
     ) {
       throw buildInvalidArgumentError(
-        'At least one of city, dailyTime or enabled must be provided.',
+        'At least one of alertScope, cron or enabled must be provided.',
         [
           {
             field: 'body',
@@ -308,24 +371,24 @@ export class TaskRepository {
       );
     }
 
-    const city =
-      input.city === undefined
-        ? currentTask.city
-        : assertNonEmptyString(input.city, 'city');
-    const dailyTime =
-      input.dailyTime === undefined
-        ? currentTask.dailyTime
-        : assertDailyTime(input.dailyTime);
+    const alertScope =
+      input.alertScope === undefined
+        ? currentTask.alertScope
+        : normalizeAlertScope(input.alertScope);
+    const taskCron =
+      input.cron === undefined
+        ? currentTask.cron
+        : normalizeCronExpression(input.cron);
     const enabled =
       input.enabled === undefined
         ? currentTask.enabled
         : assertBoolean(input.enabled, 'enabled');
-    const updatedTask: DailyWeatherTask = {
+    const updatedTask: AlarmFetchTask = {
       ...currentTask,
-      city,
-      dailyTime,
+      alertScope,
+      cron: taskCron,
       enabled,
-      name: buildTaskName(city),
+      name: buildTaskName(alertScope),
       updatedAt: this.now().toISOString(),
     };
     const nextTasksById = new Map(this.tasksById);
@@ -375,6 +438,24 @@ export class TaskRepository {
     });
   }
 
+  private notifyListeners(event: TaskRepositoryChangeEvent): void {
+    this.listeners.forEach((listener) => {
+      try {
+        listener({
+          action: event.action,
+          task: event.task ? cloneTask(event.task) : undefined,
+          tasks: event.tasks.map((task) => cloneTask(task)),
+        });
+      } catch (error) {
+        taskRepositoryLogger.warn('task repository listener failed', {
+          action: event.action,
+          filePath: this.filePath,
+          reason: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    });
+  }
+
   private readTasksFile(): TasksFile {
     this.ensureFileExists();
 
@@ -387,7 +468,7 @@ export class TaskRepository {
       }
 
       return {
-        tasks: parsedContent.tasks as DailyWeatherTask[],
+        tasks: parsedContent.tasks as AlarmFetchTask[],
       };
     } catch (error) {
       taskRepositoryLogger.error(
@@ -408,7 +489,7 @@ export class TaskRepository {
 
   private loadFromDisk(): void {
     const rawTasks = this.readTasksFile().tasks;
-    const nextTasksById = new Map<string, DailyWeatherTask>();
+    const nextTasksById = new Map<string, AlarmFetchTask>();
 
     rawTasks.forEach((rawTask, index) => {
       try {
@@ -439,9 +520,14 @@ export class TaskRepository {
       filePath: this.filePath,
       taskCount: this.tasksById.size,
     });
+
+    this.notifyListeners({
+      action: 'reload',
+      tasks: this.listAllTasks(),
+    });
   }
 
-  private getOwnedTask(taskId: string, userId: string): DailyWeatherTask {
+  private getOwnedTask(taskId: string, userId: string): AlarmFetchTask {
     const task = this.tasksById.get(taskId);
 
     if (!task) {
@@ -460,9 +546,9 @@ export class TaskRepository {
   }
 
   private persist(
-    nextTasksById: Map<string, DailyWeatherTask>,
+    nextTasksById: Map<string, AlarmFetchTask>,
     action: 'create' | 'update' | 'delete',
-    task: DailyWeatherTask,
+    task: AlarmFetchTask,
   ): void {
     const nextTasks = sortTasks(Array.from(nextTasksById.values()));
     const fileContent = {
@@ -502,6 +588,12 @@ export class TaskRepository {
       taskId: task.id,
       ownerUserId: maskUserId(task.ownerUserId),
       taskCount: this.tasksById.size,
+    });
+
+    this.notifyListeners({
+      action,
+      task,
+      tasks: nextTasks,
     });
   }
 }

@@ -4,9 +4,9 @@
 
 | 项目名称 | LINE Bot 智能消息处理系统 |
 |---------|-------------------------|
-| 文档版本 | V3.0（Agent + 动态任务版） |
+| 文档版本 | V4.0（告警任务 + Cron 版） |
 | 创建日期 | 2026-03-11 |
-| 更新日期 | 2026-03-16 |
+| 更新日期 | 2026-03-18 |
 | 技术栈 | `@line/bot-sdk` + Express + LangChain Agent |
 | 文档状态 | 待评审 |
 
@@ -38,11 +38,11 @@
 ```json
 {
   "code": "INVALID_ARGUMENT",
-  "message": "dailyTime must use HH:mm format.",
+  "message": "cron must use a valid 6-field cron expression, for example \"0 0 8 * * *\".",
   "errors": [
     {
-      "field": "dailyTime",
-      "message": "Expected HH:mm."
+      "field": "cron",
+      "message": "Expected a valid 6-field cron expression such as \"0 0 8 * * *\"."
     }
   ]
 }
@@ -57,7 +57,7 @@
 | `RESOURCE_NOT_FOUND` | 资源不存在 |
 | `FORBIDDEN_TASK_ACCESS` | 无权操作当前任务 |
 | `INVALID_LINE_SIGNATURE` | Webhook 签名校验失败 |
-| `EXTERNAL_SERVICE_ERROR` | LLM、Tavily、天气 API 等外部服务错误 |
+| `EXTERNAL_SERVICE_ERROR` | LLM、Tavily、告警服务等外部服务错误 |
 | `INTERNAL_ERROR` | 服务内部错误 |
 
 ---
@@ -101,7 +101,7 @@
 ```json
 {
   "userId": "U1234567890",
-  "message": "每天早上 8 点给我推送北京天气"
+  "message": "每天早上 8 点获取当前未处理告警信息"
 }
 ```
 
@@ -113,8 +113,8 @@
   "message": "ok",
   "data": {
     "userId": "U1234567890",
-    "message": "每天早上 8 点给我推送北京天气",
-    "reply": "好的，我已经为你创建了每天 08:00 推送北京天气的任务。",
+    "message": "每天早上 8 点获取当前未处理告警信息",
+    "reply": "已创建任务 [alarm-task-001] 当前未处理告警定时获取 范围=当前未处理告警 Cron=0 0 8 * * * 状态=启用 来源=natural_language",
     "usedTools": [
       "task.create"
     ]
@@ -137,16 +137,16 @@
 
 ```json
 {
-  "id": "weather-001",
-  "type": "daily_weather",
-  "name": "北京天气提醒",
+  "id": "alarm-task-001",
+  "type": "alarm_info_fetch",
+  "name": "当前未处理告警定时获取",
   "ownerUserId": "U1234567890",
-  "city": "北京",
-  "dailyTime": "08:00",
+  "alertScope": "当前未处理告警",
+  "cron": "0 0 8 * * *",
   "enabled": true,
   "source": "natural_language",
-  "createdAt": "2026-03-16T08:00:00.000Z",
-  "updatedAt": "2026-03-16T08:00:00.000Z"
+  "createdAt": "2026-03-18T08:00:00.000Z",
+  "updatedAt": "2026-03-18T08:00:00.000Z"
 }
 ```
 
@@ -173,16 +173,16 @@
   "data": {
     "tasks": [
       {
-        "id": "weather-001",
-        "type": "daily_weather",
-        "name": "北京天气提醒",
+        "id": "alarm-task-001",
+        "type": "alarm_info_fetch",
+        "name": "当前未处理告警定时获取",
         "ownerUserId": "U1234567890",
-        "city": "北京",
-        "dailyTime": "08:00",
+        "alertScope": "当前未处理告警",
+        "cron": "0 0 8 * * *",
         "enabled": true,
         "source": "natural_language",
-        "createdAt": "2026-03-16T08:00:00.000Z",
-        "updatedAt": "2026-03-16T08:00:00.000Z"
+        "createdAt": "2026-03-18T08:00:00.000Z",
+        "updatedAt": "2026-03-18T08:00:00.000Z"
       }
     ],
     "recentExecutions": []
@@ -199,8 +199,8 @@
 ```json
 {
   "userId": "U1234567890",
-  "city": "北京",
-  "dailyTime": "08:00",
+  "alertScope": "当前未处理告警",
+  "cron": "0 0 8 * * *",
   "enabled": true,
   "source": "api"
 }
@@ -208,10 +208,10 @@
 
 **约束**
 
-- `type` 固定为 `daily_weather`
-- `dailyTime` 使用 `HH:mm`
+- `type` 固定为 `alarm_info_fetch`
+- `cron` 必须是合法 6 字段表达式
 - `ownerUserId` 由 `userId` 推导
-- 不支持自定义 Cron 或自定义推送目标
+- 不支持自定义推送目标或非 6 字段 cron
 
 ### 4.4 `PATCH /api/tasks/:taskId`
 
@@ -222,15 +222,15 @@
 ```json
 {
   "userId": "U1234567890",
-  "city": "上海",
-  "dailyTime": "09:00",
+  "alertScope": "当前告警信息",
+  "cron": "0 0 9 * * *",
   "enabled": true
 }
 ```
 
 **约束**
 
-- 仅允许更新 `city`、`dailyTime`、`enabled`
+- 仅允许更新 `alertScope`、`cron`、`enabled`
 - 若任务不属于当前 `userId`，返回 `FORBIDDEN_TASK_ACCESS`
 
 ### 4.5 `DELETE /api/tasks/:taskId`
@@ -245,7 +245,7 @@
 
 **示例**
 
-`DELETE /api/tasks/weather-001?userId=U1234567890`
+`DELETE /api/tasks/alarm-task-001?userId=U1234567890`
 
 **成功响应**
 
@@ -254,7 +254,7 @@
   "code": "OK",
   "message": "ok",
   "data": {
-    "taskId": "weather-001",
+    "taskId": "alarm-task-001",
     "deleted": true
   }
 }
@@ -279,7 +279,7 @@
   "code": "OK",
   "message": "ok",
   "data": {
-    "taskId": "weather-001",
+    "taskId": "alarm-task-001",
     "message": "Task executed successfully."
   }
 }
@@ -294,9 +294,9 @@
 | 命令 | 示例 | 说明 |
 |------|------|------|
 | `/task list` | `/task list` | 列出当前用户所有任务 |
-| `/task create` | `/task create city=北京 time=08:00 enabled=true` | 创建任务 |
-| `/task update` | `/task update taskId=weather-001 time=09:00` | 更新任务 |
-| `/task delete` | `/task delete taskId=weather-001` | 删除任务 |
+| `/task create` | `/task create alertScope=当前未处理告警 cron="0 0 8 * * *" enabled=true` | 创建任务 |
+| `/task update` | `/task update taskId=alarm-task-001 cron="0 0 9 * * *"` | 更新任务 |
+| `/task delete` | `/task delete taskId=alarm-task-001` | 删除任务 |
 
 缺少必要参数时，Agent 返回命令用法说明，不直接写入任务。
 
@@ -314,7 +314,7 @@
   "message": "ok",
   "data": {
     "status": "ok",
-    "timestamp": "2026-03-16T10:00:00.000Z",
+    "timestamp": "2026-03-18T10:00:00.000Z",
     "services": {
       "agent": "ready",
       "scheduler": "running",
@@ -338,10 +338,10 @@
 - 使用 `TAVILY_API_KEY`
 - 仅用于实时外部信息查询
 
-### 7.3 天气 API
+### 7.3 告警服务
 
 - 请求必须设置超时
-- 输入至少包含城市或可映射到城市的查询参数
+- 输入最少包含 `alertScope` 或可映射到告警范围的查询参数
 - 响应转换为文本消息时，不直接暴露原始敏感返回头
 
 ---
@@ -353,6 +353,7 @@
 | V1.0 | 2026-03-11 | 初始版本 |
 | V2.0 | 2026-03-12 | 精简为 Demo 版本 |
 | V3.0 | 2026-03-16 | 新增 Agent 调试、动态任务 CRUD 与 Slash Command 语义 |
+| V4.0 | 2026-03-18 | 切换为告警任务对象与 6 字段 cron 接口约束 |
 
 ---
 

@@ -1,12 +1,12 @@
 {
   "tasks": [
     {
-      "id": "weather-seed-001",
-      "type": "daily_weather",
-      "name": "台北天气提醒",
+      "id": "alarm-task-seed-001",
+      "type": "alarm_info_fetch",
+      "name": "当前未处理告警定时获取",
       "ownerUserId": "Uxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-      "city": "台北",
-      "dailyTime": "08:00",
+      "alertScope": "当前未处理告警",
+      "cron": "0 0 8 * * *",
       "enabled": false,
       "source": "api_seed",
       "createdAt": "2026-03-16T08:00:00.000Z",

@@ -25,16 +25,16 @@ type TaskIdParams = {
 
 interface CreateTaskBody {
   userId?: unknown;
-  city?: unknown;
-  dailyTime?: unknown;
+  alertScope?: unknown;
+  cron?: unknown;
   enabled?: unknown;
   source?: unknown;
 }
 
 interface UpdateTaskBody {
   userId?: unknown;
-  city?: unknown;
-  dailyTime?: unknown;
+  alertScope?: unknown;
+  cron?: unknown;
   enabled?: unknown;
 }
 
@@ -202,12 +202,12 @@ export const createTasksRouter = (
       try {
         const body = getObjectBody(req.body);
 
-        assertAllowedKeys(body, ['city', 'dailyTime', 'enabled', 'source', 'userId']);
+        assertAllowedKeys(body, ['alertScope', 'cron', 'enabled', 'source', 'userId']);
 
         const task = taskRepository.createTask({
           userId: getRequiredText(body.userId, 'userId'),
-          city: getRequiredText(body.city, 'city'),
-          dailyTime: getRequiredText(body.dailyTime, 'dailyTime'),
+          alertScope: getRequiredText(body.alertScope, 'alertScope'),
+          cron: getRequiredText(body.cron, 'cron'),
           enabled: getOptionalBoolean(body.enabled, 'enabled'),
           source: getCreateSource(body.source),
         });
@@ -235,13 +235,13 @@ export const createTasksRouter = (
       try {
         const body = getObjectBody(req.body);
 
-        assertAllowedKeys(body, ['city', 'dailyTime', 'enabled', 'userId']);
+        assertAllowedKeys(body, ['alertScope', 'cron', 'enabled', 'userId']);
 
         const task = taskRepository.updateTask({
           taskId: getRequiredText(req.params.taskId, 'taskId'),
           userId: getRequiredText(body.userId, 'userId'),
-          city: getOptionalText(body.city, 'city'),
-          dailyTime: getOptionalText(body.dailyTime, 'dailyTime'),
+          alertScope: getOptionalText(body.alertScope, 'alertScope'),
+          cron: getOptionalText(body.cron, 'cron'),
           enabled: getOptionalBoolean(body.enabled, 'enabled'),
         });
 
