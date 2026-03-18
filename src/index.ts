@@ -9,6 +9,7 @@ type ShutdownReason = NodeJS.Signals | 'uncaughtException' | 'bootstrapFailure';
 
 let server: Server | null = null;
 let isShuttingDown = false;
+let stopScheduler: (() => void) | null = null;
 
 const shutdown = (reason: ShutdownReason, exitCode = 0): void => {
   if (isShuttingDown) {
@@ -17,6 +18,10 @@ const shutdown = (reason: ShutdownReason, exitCode = 0): void => {
 
   isShuttingDown = true;
   appLogger.info('application shutdown started', { reason, exitCode });
+
+  if (stopScheduler) {
+    stopScheduler();
+  }
 
   if (!server) {
     process.exit(exitCode);
@@ -53,9 +58,14 @@ const bootstrap = (): void => {
     const { config } = require('./config') as typeof import('./config');
     const { taskRepository } = require('./services/task-repository') as typeof import('./services/task-repository');
     const { schedulerService } = require('./services/scheduler') as typeof import('./services/scheduler');
+    const { agentService } = require('./services/agent') as typeof import('./services/agent');
+    const { lineService } = require('./services/line') as typeof import('./services/line');
     const webhookRouter = (require('./routes/webhook') as typeof import('./routes/webhook')).default;
     const chatRouter = (require('./routes/chat') as typeof import('./routes/chat')).default;
     const taskRouter = (require('./routes/tasks') as typeof import('./routes/tasks')).default;
+
+    schedulerService.setDeps({ agentService, lineService });
+    stopScheduler = () => schedulerService.stop();
 
     taskRepository.subscribe((event) => {
       schedulerService.notifyTasksUpdated(event);
@@ -68,7 +78,18 @@ const bootstrap = (): void => {
     const app = express();
 
     app.get('/health', (_req: Request, res: Response) => {
-      res.status(200).json({ status: 'ok' });
+      const lastRefresh = schedulerService.getLastRefresh();
+
+      res.status(200).json({
+        status: 'ok',
+        scheduler: lastRefresh
+          ? {
+              activeTaskCount: lastRefresh.activeTaskCount,
+              taskCount: lastRefresh.taskCount,
+              lastRefreshAt: lastRefresh.updatedAt,
+            }
+          : null,
+      });
     });
 
     app.use(webhookRouter);
@@ -89,3 +110,4 @@ const bootstrap = (): void => {
 };
 
 bootstrap();
+

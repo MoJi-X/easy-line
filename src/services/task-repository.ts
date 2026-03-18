@@ -85,7 +85,7 @@ const cloneTask = (task: AlarmFetchTask): AlarmFetchTask => {
 };
 
 const buildTaskName = (alertScope: string): string => {
-  return `${alertScope}定时获取`;
+  return `Scheduled Fetch: ${alertScope}`;
 };
 
 const sortTasks = (tasks: AlarmFetchTask[]): AlarmFetchTask[] => {
@@ -141,7 +141,7 @@ export const normalizeAlertScope = (value: unknown): string => {
       normalizedValue,
     )
   ) {
-    return '当前未处理告警';
+    return 'Current Untreated Alarms';
   }
 
   if (
@@ -149,7 +149,7 @@ export const normalizeAlertScope = (value: unknown): string => {
       normalizedValue,
     )
   ) {
-    return '当前告警信息';
+    return 'Current Alarms';
   }
 
   return normalizedValue;

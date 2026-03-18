@@ -1,20 +1,20 @@
-import { tool } from 'langchain';
+import { tool } from "langchain";
 
-import { AppError, type AppErrorDetail } from '../errors/app-error';
-import { createAppLogger } from '../utils/app-logger';
+import { AppError, type AppErrorDetail } from "../errors/app-error";
+import { createAppLogger } from "../utils/app-logger";
 import {
   taskRepository as defaultTaskRepository,
   normalizeAlertScope,
   type AlarmFetchTask,
   type TaskRepository,
-} from '../services/task-repository';
+} from "../services/task-repository";
 
-const taskToolLogger = createAppLogger('task-tools');
+const taskToolLogger = createAppLogger("task-tools");
 
-export const TASK_CREATE_TOOL_NAME = 'task.create';
-export const TASK_DELETE_TOOL_NAME = 'task.delete';
-export const TASK_LIST_TOOL_NAME = 'task.list';
-export const TASK_UPDATE_TOOL_NAME = 'task.update';
+export const TASK_CREATE_TOOL_NAME = "task.create";
+export const TASK_DELETE_TOOL_NAME = "task.delete";
+export const TASK_LIST_TOOL_NAME = "task.list";
+export const TASK_UPDATE_TOOL_NAME = "task.update";
 
 interface TaskToolDependencies {
   taskRepository?: TaskRepository;
@@ -37,7 +37,7 @@ export interface TaskCommandResult {
 export interface TaskToolFailure {
   code?: string;
   details?: AppErrorDetail[];
-  error_type: 'invalid_tool_input' | 'task_operation_failed';
+  error_type: "invalid_tool_input" | "task_operation_failed";
   message: string;
   status_code?: number;
   success: false;
@@ -68,7 +68,7 @@ export interface TaskUpdateSuccess {
   task: AlarmFetchTask;
 }
 
-type TaskCommandAction = 'create' | 'delete' | 'list' | 'update';
+type TaskCommandAction = "create" | "delete" | "list" | "update";
 
 interface ParsedTaskCommand {
   action: TaskCommandAction;
@@ -100,80 +100,90 @@ type DeleteTaskToolInput = {
 };
 
 const TASK_COMMAND_USAGE = [
-  '可用命令：',
-  '/task list',
-  '/task create alertScope=当前未处理告警 cron="0 0 8 * * *" enabled=true',
+  "可用命令：",
+  "/task list",
+  '/task create alertScope=当前告警信息 cron="0 0 8 * * *" enabled=true',
   '/task update taskId=alarm-task-001 cron="0 0 9 * * *"',
-  '/task delete taskId=alarm-task-001',
-].join('\n');
+  "/task delete taskId=alarm-task-001",
+].join("\n");
 
 const CREATE_TASK_SCHEMA = {
-  type: 'object',
+  type: "object",
   properties: {
-    userId: { type: 'string' },
-    alertScope: { type: 'string' },
-    cron: { type: 'string' },
-    enabled: { type: 'boolean', default: true },
+    userId: { type: "string" },
+    alertScope: { type: "string" },
+    cron: { type: "string" },
+    enabled: { type: "boolean", default: true },
   },
-  required: ['userId', 'alertScope', 'cron'],
+  required: ["userId", "alertScope", "cron"],
   additionalProperties: false,
 } as const;
 
 const LIST_TASK_SCHEMA = {
-  type: 'object',
+  type: "object",
   properties: {
-    userId: { type: 'string' },
+    userId: { type: "string" },
   },
-  required: ['userId'],
+  required: ["userId"],
   additionalProperties: false,
 } as const;
 
 const UPDATE_TASK_SCHEMA = {
-  type: 'object',
+  type: "object",
   properties: {
-    userId: { type: 'string' },
-    taskId: { type: 'string' },
-    alertScope: { type: 'string' },
-    cron: { type: 'string' },
-    enabled: { type: 'boolean' },
+    userId: { type: "string" },
+    taskId: { type: "string" },
+    alertScope: { type: "string" },
+    cron: { type: "string" },
+    enabled: { type: "boolean" },
   },
-  required: ['userId', 'taskId'],
+  required: ["userId", "taskId"],
   additionalProperties: false,
 } as const;
 
 const DELETE_TASK_SCHEMA = {
-  type: 'object',
+  type: "object",
   properties: {
-    userId: { type: 'string' },
-    taskId: { type: 'string' },
+    userId: { type: "string" },
+    taskId: { type: "string" },
   },
-  required: ['userId', 'taskId'],
+  required: ["userId", "taskId"],
   additionalProperties: false,
 } as const;
 
 const formatTaskSummary = (task: AlarmFetchTask): string => {
-  return `[${task.id}] ${task.name} 范围=${task.alertScope} Cron=${task.cron} 状态=${task.enabled ? '启用' : '停用'} 来源=${task.source}`;
+  return `[${task.id}] ${task.name} 范围=${task.alertScope} Cron=${task.cron} 状态=${task.enabled ? "启用" : "停用"} 来源=${task.source}`;
 };
 
 const getRequiredText = (value: unknown, field: string): string => {
-  if (typeof value !== 'string') {
-    throw new AppError(400, 'INVALID_ARGUMENT', `${field} must be a non-empty string.`, [
-      {
-        field,
-        message: 'Expected a non-empty string.',
-      },
-    ]);
+  if (typeof value !== "string") {
+    throw new AppError(
+      400,
+      "INVALID_ARGUMENT",
+      `${field} must be a non-empty string.`,
+      [
+        {
+          field,
+          message: "Expected a non-empty string.",
+        },
+      ],
+    );
   }
 
   const normalizedValue = value.trim();
 
   if (!normalizedValue) {
-    throw new AppError(400, 'INVALID_ARGUMENT', `${field} must be a non-empty string.`, [
-      {
-        field,
-        message: 'Expected a non-empty string.',
-      },
-    ]);
+    throw new AppError(
+      400,
+      "INVALID_ARGUMENT",
+      `${field} must be a non-empty string.`,
+      [
+        {
+          field,
+          message: "Expected a non-empty string.",
+        },
+      ],
+    );
   }
 
   return normalizedValue;
@@ -195,24 +205,29 @@ const getOptionalBoolean = (
     return undefined;
   }
 
-  if (typeof value !== 'boolean') {
-    throw new AppError(400, 'INVALID_ARGUMENT', `${field} must be a boolean value.`, [
-      {
-        field,
-        message: 'Expected a boolean value.',
-      },
-    ]);
+  if (typeof value !== "boolean") {
+    throw new AppError(
+      400,
+      "INVALID_ARGUMENT",
+      `${field} must be a boolean value.`,
+      [
+        {
+          field,
+          message: "Expected a boolean value.",
+        },
+      ],
+    );
   }
 
   return value;
 };
 
 const parseBooleanFlag = (value: string): boolean | null => {
-  if (value === 'true') {
+  if (value === "true") {
     return true;
   }
 
-  if (value === 'false') {
+  if (value === "false") {
     return false;
   }
 
@@ -221,7 +236,7 @@ const parseBooleanFlag = (value: string): boolean | null => {
 
 const tokenizeTaskCommand = (message: string): string[] | null => {
   const tokens: string[] = [];
-  let currentToken = '';
+  let currentToken = "";
   let inQuotes = false;
 
   for (const character of message.trim()) {
@@ -233,7 +248,7 @@ const tokenizeTaskCommand = (message: string): string[] | null => {
     if (/\s/u.test(character) && !inQuotes) {
       if (currentToken) {
         tokens.push(currentToken);
-        currentToken = '';
+        currentToken = "";
       }
       continue;
     }
@@ -255,7 +270,7 @@ const tokenizeTaskCommand = (message: string): string[] | null => {
 const parseTaskCommand = (message: string): ParsedTaskCommand | null => {
   const trimmedMessage = message.trim();
 
-  if (!trimmedMessage.startsWith('/task')) {
+  if (!trimmedMessage.startsWith("/task")) {
     return null;
   }
 
@@ -263,26 +278,26 @@ const parseTaskCommand = (message: string): ParsedTaskCommand | null => {
 
   if (!tokens) {
     return {
-      action: 'list',
+      action: "list",
       args: {
-        __invalid__: 'unterminated_quote',
+        __invalid__: "unterminated_quote",
       },
     };
   }
 
   const action = tokens[1] as TaskCommandAction | undefined;
 
-  if (!action || !['create', 'delete', 'list', 'update'].includes(action)) {
+  if (!action || !["create", "delete", "list", "update"].includes(action)) {
     return {
-      action: 'list',
+      action: "list",
       args: {
-        __invalid__: 'true',
+        __invalid__: "true",
       },
     };
   }
 
   const args = tokens.slice(2).reduce<Record<string, string>>((acc, token) => {
-    const separatorIndex = token.indexOf('=');
+    const separatorIndex = token.indexOf("=");
 
     if (separatorIndex <= 0 || separatorIndex === token.length - 1) {
       acc.__invalid__ = token;
@@ -326,16 +341,17 @@ export const buildTaskListReply = (tasks: AlarmFetchTask[]): string => {
     return `你当前还没有告警定时任务。\n${TASK_COMMAND_USAGE}`;
   }
 
-  return ['当前任务列表：', ...tasks.map((task) => formatTaskSummary(task))].join(
-    '\n',
-  );
+  return [
+    "当前任务列表：",
+    ...tasks.map((task) => formatTaskSummary(task)),
+  ].join("\n");
 };
 
 const mapTaskToolError = (error: unknown): TaskToolFailure => {
   if (error instanceof AppError) {
     return {
       success: false,
-      error_type: 'task_operation_failed',
+      error_type: "task_operation_failed",
       message: error.message,
       code: error.code,
       details: error.details,
@@ -345,8 +361,9 @@ const mapTaskToolError = (error: unknown): TaskToolFailure => {
 
   return {
     success: false,
-    error_type: 'task_operation_failed',
-    message: error instanceof Error ? error.message : 'Unknown task tool error.',
+    error_type: "task_operation_failed",
+    message:
+      error instanceof Error ? error.message : "Unknown task tool error.",
   };
 };
 
@@ -373,14 +390,14 @@ const createTaskCreateTool = (taskRepository: TaskRepository) => {
 
       try {
         const task = taskRepository.createTask({
-          userId: getRequiredText(input.userId, 'userId'),
+          userId: getRequiredText(input.userId, "userId"),
           alertScope: normalizeAlertScope(input.alertScope),
-          cron: getRequiredText(input.cron, 'cron'),
-          enabled: getOptionalBoolean(input.enabled, 'enabled'),
-          source: 'natural_language',
+          cron: getRequiredText(input.cron, "cron"),
+          enabled: getOptionalBoolean(input.enabled, "enabled"),
+          source: "natural_language",
         });
 
-        taskToolLogger.debug('task.create output', {
+        taskToolLogger.debug("task.create output", {
           taskId: task.id,
           durationMs: Date.now() - startedAt,
         });
@@ -391,9 +408,10 @@ const createTaskCreateTool = (taskRepository: TaskRepository) => {
           reply: buildTaskCreatedReply(task),
         };
       } catch (error) {
-        taskToolLogger.warn('task.create failed', {
+        taskToolLogger.warn("task.create failed", {
           durationMs: Date.now() - startedAt,
-          errorMessage: error instanceof Error ? error.message : 'Unknown error',
+          errorMessage:
+            error instanceof Error ? error.message : "Unknown error",
         });
         return mapTaskToolError(error);
       }
@@ -401,7 +419,7 @@ const createTaskCreateTool = (taskRepository: TaskRepository) => {
     {
       name: TASK_CREATE_TOOL_NAME,
       description:
-        '为当前用户创建一个告警信息定时任务，输入必须包含告警范围 alertScope 和 6 字段 cron 表达式。',
+        "为当前用户创建一个告警信息定时任务，输入必须包含告警范围 alertScope 和 6 字段 cron 表达式。",
       schema: CREATE_TASK_SCHEMA,
     },
   );
@@ -416,10 +434,10 @@ const createTaskListTool = (taskRepository: TaskRepository) => {
 
       try {
         const tasks = taskRepository.listTasksByOwner(
-          getRequiredText(input.userId, 'userId'),
+          getRequiredText(input.userId, "userId"),
         );
 
-        taskToolLogger.debug('task.list output', {
+        taskToolLogger.debug("task.list output", {
           taskCount: tasks.length,
           durationMs: Date.now() - startedAt,
         });
@@ -430,16 +448,17 @@ const createTaskListTool = (taskRepository: TaskRepository) => {
           reply: buildTaskListReply(tasks),
         };
       } catch (error) {
-        taskToolLogger.warn('task.list failed', {
+        taskToolLogger.warn("task.list failed", {
           durationMs: Date.now() - startedAt,
-          errorMessage: error instanceof Error ? error.message : 'Unknown error',
+          errorMessage:
+            error instanceof Error ? error.message : "Unknown error",
         });
         return mapTaskToolError(error);
       }
     },
     {
       name: TASK_LIST_TOOL_NAME,
-      description: '查询当前用户已有的告警信息定时任务列表。',
+      description: "查询当前用户已有的告警信息定时任务列表。",
       schema: LIST_TASK_SCHEMA,
     },
   );
@@ -454,14 +473,14 @@ const createTaskUpdateTool = (taskRepository: TaskRepository) => {
 
       try {
         const task = taskRepository.updateTask({
-          userId: getRequiredText(input.userId, 'userId'),
-          taskId: getRequiredText(input.taskId, 'taskId'),
-          alertScope: getOptionalText(input.alertScope, 'alertScope'),
-          cron: getOptionalText(input.cron, 'cron'),
-          enabled: getOptionalBoolean(input.enabled, 'enabled'),
+          userId: getRequiredText(input.userId, "userId"),
+          taskId: getRequiredText(input.taskId, "taskId"),
+          alertScope: getOptionalText(input.alertScope, "alertScope"),
+          cron: getOptionalText(input.cron, "cron"),
+          enabled: getOptionalBoolean(input.enabled, "enabled"),
         });
 
-        taskToolLogger.debug('task.update output', {
+        taskToolLogger.debug("task.update output", {
           taskId: task.id,
           durationMs: Date.now() - startedAt,
         });
@@ -472,9 +491,10 @@ const createTaskUpdateTool = (taskRepository: TaskRepository) => {
           reply: buildTaskUpdatedReply(task),
         };
       } catch (error) {
-        taskToolLogger.warn('task.update failed', {
+        taskToolLogger.warn("task.update failed", {
           durationMs: Date.now() - startedAt,
-          errorMessage: error instanceof Error ? error.message : 'Unknown error',
+          errorMessage:
+            error instanceof Error ? error.message : "Unknown error",
         });
         return mapTaskToolError(error);
       }
@@ -482,7 +502,7 @@ const createTaskUpdateTool = (taskRepository: TaskRepository) => {
     {
       name: TASK_UPDATE_TOOL_NAME,
       description:
-        '更新当前用户的告警信息定时任务，可修改 alertScope、cron 或 enabled。',
+        "更新当前用户的告警信息定时任务，可修改 alertScope、cron 或 enabled。",
       schema: UPDATE_TASK_SCHEMA,
     },
   );
@@ -497,11 +517,11 @@ const createTaskDeleteTool = (taskRepository: TaskRepository) => {
 
       try {
         const result = taskRepository.deleteTask(
-          getRequiredText(input.taskId, 'taskId'),
-          getRequiredText(input.userId, 'userId'),
+          getRequiredText(input.taskId, "taskId"),
+          getRequiredText(input.userId, "userId"),
         );
 
-        taskToolLogger.debug('task.delete output', {
+        taskToolLogger.debug("task.delete output", {
           taskId: result.taskId,
           durationMs: Date.now() - startedAt,
         });
@@ -513,24 +533,23 @@ const createTaskDeleteTool = (taskRepository: TaskRepository) => {
           reply: buildTaskDeletedReply(result.taskId),
         };
       } catch (error) {
-        taskToolLogger.warn('task.delete failed', {
+        taskToolLogger.warn("task.delete failed", {
           durationMs: Date.now() - startedAt,
-          errorMessage: error instanceof Error ? error.message : 'Unknown error',
+          errorMessage:
+            error instanceof Error ? error.message : "Unknown error",
         });
         return mapTaskToolError(error);
       }
     },
     {
       name: TASK_DELETE_TOOL_NAME,
-      description: '删除当前用户自己的告警信息定时任务。',
+      description: "删除当前用户自己的告警信息定时任务。",
       schema: DELETE_TASK_SCHEMA,
     },
   );
 };
 
-export const createTaskTools = (
-  options: TaskToolsOptions = {},
-): TaskTool[] => {
+export const createTaskTools = (options: TaskToolsOptions = {}): TaskTool[] => {
   const taskRepository = options.taskRepository ?? defaultTaskRepository;
 
   return [
@@ -552,31 +571,31 @@ export const tryHandleTaskCommand = (
     return null;
   }
 
-  taskToolLogger.debug('task command input', {
+  taskToolLogger.debug("task command input", {
     action: parsedCommand.action,
     userId: input.userId,
     hasArgs: !parsedCommand.args.__invalid__,
   });
 
   if (parsedCommand.args.__invalid__) {
-    taskToolLogger.warn('task command invalid', {
+    taskToolLogger.warn("task command invalid", {
       action: parsedCommand.action,
       durationMs: Date.now() - startedAt,
     });
-    return buildUsageReply('命令格式无效。');
+    return buildUsageReply("命令格式无效。");
   }
 
   const taskRepository = dependencies.taskRepository ?? defaultTaskRepository;
 
   switch (parsedCommand.action) {
-    case 'list': {
+    case "list": {
       if (Object.keys(parsedCommand.args).length > 0) {
-        return buildUsageReply('/task list 不接受额外参数。');
+        return buildUsageReply("/task list 不接受额外参数。");
       }
 
       const tasks = taskRepository.listTasksByOwner(input.userId);
 
-      taskToolLogger.debug('task list output', {
+      taskToolLogger.debug("task list output", {
         taskCount: tasks.length,
         durationMs: Date.now() - startedAt,
       });
@@ -587,12 +606,13 @@ export const tryHandleTaskCommand = (
       };
     }
 
-    case 'create': {
-      const alertScope = parsedCommand.args.alertScope ?? parsedCommand.args.scope;
+    case "create": {
+      const alertScope =
+        parsedCommand.args.alertScope ?? parsedCommand.args.scope;
       const taskCron = parsedCommand.args.cron;
 
       if (!alertScope || !taskCron) {
-        return buildUsageReply('/task create 需要 alertScope 和 cron 参数。');
+        return buildUsageReply("/task create 需要 alertScope 和 cron 参数。");
       }
 
       let enabled: boolean | undefined;
@@ -601,7 +621,7 @@ export const tryHandleTaskCommand = (
         const parsedEnabled = parseBooleanFlag(parsedCommand.args.enabled);
 
         if (parsedEnabled === null) {
-          return buildUsageReply('enabled 只能是 true 或 false。');
+          return buildUsageReply("enabled 只能是 true 或 false。");
         }
 
         enabled = parsedEnabled;
@@ -613,10 +633,10 @@ export const tryHandleTaskCommand = (
           alertScope,
           cron: taskCron,
           enabled,
-          source: 'slash_command',
+          source: "slash_command",
         });
 
-        taskToolLogger.debug('task create output', {
+        taskToolLogger.debug("task create output", {
           taskId: task.id,
           alertScope: task.alertScope,
           cron: task.cron,
@@ -629,7 +649,7 @@ export const tryHandleTaskCommand = (
         };
       } catch (error) {
         if (error instanceof AppError) {
-          taskToolLogger.warn('task create failed', {
+          taskToolLogger.warn("task create failed", {
             alertScope,
             cron: taskCron,
             durationMs: Date.now() - startedAt,
@@ -642,11 +662,11 @@ export const tryHandleTaskCommand = (
       }
     }
 
-    case 'update': {
+    case "update": {
       const taskId = parsedCommand.args.taskId;
 
       if (!taskId) {
-        return buildUsageReply('/task update 需要 taskId 参数。');
+        return buildUsageReply("/task update 需要 taskId 参数。");
       }
 
       let enabled: boolean | undefined;
@@ -655,13 +675,14 @@ export const tryHandleTaskCommand = (
         const parsedEnabled = parseBooleanFlag(parsedCommand.args.enabled);
 
         if (parsedEnabled === null) {
-          return buildUsageReply('enabled 只能是 true 或 false。');
+          return buildUsageReply("enabled 只能是 true 或 false。");
         }
 
         enabled = parsedEnabled;
       }
 
-      const alertScope = parsedCommand.args.alertScope ?? parsedCommand.args.scope;
+      const alertScope =
+        parsedCommand.args.alertScope ?? parsedCommand.args.scope;
       const taskCron = parsedCommand.args.cron;
 
       if (
@@ -670,7 +691,7 @@ export const tryHandleTaskCommand = (
         enabled === undefined
       ) {
         return buildUsageReply(
-          '/task update 至少需要 alertScope、cron 或 enabled 中的一个参数。',
+          "/task update 至少需要 alertScope、cron 或 enabled 中的一个参数。",
         );
       }
 
@@ -683,7 +704,7 @@ export const tryHandleTaskCommand = (
           enabled,
         });
 
-        taskToolLogger.debug('task update output', {
+        taskToolLogger.debug("task update output", {
           taskId: task.id,
           durationMs: Date.now() - startedAt,
         });
@@ -694,7 +715,7 @@ export const tryHandleTaskCommand = (
         };
       } catch (error) {
         if (error instanceof AppError) {
-          taskToolLogger.warn('task update failed', {
+          taskToolLogger.warn("task update failed", {
             taskId,
             durationMs: Date.now() - startedAt,
             errorMessage: error.message,
@@ -706,17 +727,17 @@ export const tryHandleTaskCommand = (
       }
     }
 
-    case 'delete': {
+    case "delete": {
       const taskId = parsedCommand.args.taskId;
 
       if (!taskId) {
-        return buildUsageReply('/task delete 需要 taskId 参数。');
+        return buildUsageReply("/task delete 需要 taskId 参数。");
       }
 
       try {
         const result = taskRepository.deleteTask(taskId, input.userId);
 
-        taskToolLogger.debug('task delete output', {
+        taskToolLogger.debug("task delete output", {
           taskId: result.taskId,
           durationMs: Date.now() - startedAt,
         });
@@ -727,7 +748,7 @@ export const tryHandleTaskCommand = (
         };
       } catch (error) {
         if (error instanceof AppError) {
-          taskToolLogger.warn('task delete failed', {
+          taskToolLogger.warn("task delete failed", {
             taskId,
             durationMs: Date.now() - startedAt,
             errorMessage: error.message,

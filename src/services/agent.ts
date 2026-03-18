@@ -62,9 +62,9 @@ const WORKORDER_CONTEXT_INVALID_REPLY =
 const WORKORDER_WORKFLOW_NOT_CONFIGURED_REPLY =
   "当前未配置工单工作流地址，暂时无法创建工单。";
 const TASK_CREATE_REPLY_MISSING_BOTH =
-  "要创建告警定时任务，还需要补充告警范围和执行时间，例如“每天 08:00 获取当前未处理告警信息”。系统会自动转换为 6 字段 cron。";
+  "要创建告警定时任务，还需要补充告警范围和执行时间，例如“每天 08:00 获取当前告警信息”。系统会自动转换为 6 字段 cron。";
 const TASK_CREATE_REPLY_MISSING_SCOPE =
-  "还缺少告警范围，请补充例如“当前未处理告警”或“当前告警信息”。";
+  "还缺少告警范围，请补充例如“当前告警信息”。";
 const TASK_CREATE_REPLY_MISSING_TIME =
   "还缺少执行时间，请补充例如“08:00”或“每天早上 8 点”。系统会自动转换为 6 字段 cron。";
 const CREATE_ALARM_SESSION_TOOL_NAME = "create_alarm_session";
@@ -487,15 +487,18 @@ const extractCronFromMessage = (message: string): string | undefined => {
 
 const extractTaskAlertScope = (message: string): string | undefined => {
   if (/未处理/u.test(message)) {
-    return "当前未处理告警";
+    return "Current Untreated Alarms";
   }
 
   if (/(全部|所有).{0,3}告警/u.test(message)) {
-    return "当前告警信息";
+    return "Current Alarms";
   }
 
-  if (/告警信息/u.test(message) && /(任务|定时|提醒|获取|拉取|查询|查看)/u.test(message)) {
-    return "当前告警信息";
+  if (
+    /告警/u.test(message) &&
+    /(任务|定时|提醒|获取|拉取|查询|查看)/u.test(message)
+  ) {
+    return "Current Alarms";
   }
 
   return undefined;
@@ -522,7 +525,9 @@ const parseTaskListIntent = (message: string): TaskListIntent | null => {
     return null;
   }
 
-  if (!/(哪些|列表|查看|查询|列出|展示|看看|看下|有什么)/u.test(trimmedMessage)) {
+  if (
+    !/(哪些|列表|查看|查询|列出|展示|看看|看下|有什么)/u.test(trimmedMessage)
+  ) {
     return null;
   }
 
@@ -1159,7 +1164,10 @@ export class AgentService {
       });
       return this.handleTaskCreateDraft(
         input.userId,
-        mergeTaskCreateDraft(currentTaskWorkflow.pendingCreateDraft, input.message),
+        mergeTaskCreateDraft(
+          currentTaskWorkflow.pendingCreateDraft,
+          input.message,
+        ),
       );
     }
 
@@ -1598,7 +1606,8 @@ export class AgentService {
     try {
       const taskWorkflowResult = this.tryProcessTaskWorkflow(normalizedInput);
       const workflowResult =
-        taskWorkflowResult ?? (await this.tryProcessAlarmWorkflow(normalizedInput));
+        taskWorkflowResult ??
+        (await this.tryProcessAlarmWorkflow(normalizedInput));
       const agentResult =
         workflowResult ?? (await this.processWithRuntimeAgent(normalizedInput));
       const nextContext = this.memoryStore.saveConversationTurn(

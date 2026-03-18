@@ -20,7 +20,7 @@ const DEFAULT_ALARM_LIST_PAGE_SIZE = 20;
 const DEFAULT_ALARM_LIST_STATUS = "";
 const DEFAULT_ANALYZE_MODE = "standard";
 const DEFAULT_ANALYZE_BUSINESS_TYPE = "device_alarm";
-const DEFAULT_ANALYZE_LANGUAGE = "zh";
+const DEFAULT_ANALYZE_LANGUAGE = "en";
 const MAX_ANALYSIS_DEPTH = 5;
 const alarmToolLogger = createAppLogger("alarm-tools");
 
