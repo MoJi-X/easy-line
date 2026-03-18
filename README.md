@@ -29,6 +29,9 @@
 - `LLM_API_KEY`：OpenAI-compatible 大模型服务 API Key。
 - `LLM_BASE_URL`：可选，自定义 OpenAI-compatible 服务地址。
 - `LLM_MODEL`：可选，模型名，默认 `gpt-3.5-turbo`。
+- `TAVILY_API_KEY`：Tavily 搜索 API Key；需要启用实时搜索时填写。
+- `TAVILY_API_BASE_URL`：可选，默认 `https://api.tavily.com`。
+- `TAVILY_SEARCH_TIMEOUT_MS`：可选，Tavily 搜索超时时间，默认 `5000` 毫秒。
 - `PORT`：服务监听端口（默认 `3000`）。
 
 ## 健康检查
