@@ -91,7 +91,9 @@ const log = (
   context: LogContext = {},
   error?: unknown,
 ): void => {
-  const timestamp = new Date().toISOString();
+  const now = new Date();
+  const pad = (n: number, len = 2) => String(n).padStart(len, '0');
+  const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
   const contextText = formatContext(context);
   const line = [timestamp, level, `[${moduleName}]`, message, contextText]
     .filter((segment) => segment.length > 0)

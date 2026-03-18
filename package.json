@@ -15,6 +15,7 @@
     "verify:alarm-workflow": "node dist/scripts/verify-alarm-agent-workflow.js",
     "verify:tasks": "node dist/scripts/verify-task-slice.js",
     "verify:workorder": "node dist/scripts/verify-workorder-dispatch.js",
+    "verify:scheduler": "node dist/scripts/verify-scheduler-lifecycle.js",
     "start": "node dist/index.js"
   },
   "dependencies": {
