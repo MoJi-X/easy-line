@@ -6,6 +6,11 @@ import {
   type AlarmToolsOptions,
 } from "./alarm-tools";
 import {
+  createTaskTools,
+  type TaskTool,
+  type TaskToolsOptions,
+} from "./task-tools";
+import {
   createTavilySearchTool,
   type TavilySearchTool,
   type TavilySearchToolOptions,
@@ -16,7 +21,7 @@ import {
   type WorkOrderToolsOptions,
 } from "./workorder-tools";
 
-export type AgentTool = TavilySearchTool | AlarmTool | WorkOrderTool;
+export type AgentTool = TavilySearchTool | TaskTool | AlarmTool | WorkOrderTool;
 
 export interface RegisteredTool {
   description: string;
@@ -25,6 +30,7 @@ export interface RegisteredTool {
 
 export interface ToolRegistryOptions {
   alarmTools?: AlarmToolsOptions;
+  taskTools?: TaskToolsOptions;
   tavilySearch?: TavilySearchToolOptions;
   workorderTools?: WorkOrderToolsOptions;
 }
@@ -67,6 +73,10 @@ export const createToolRegistry = (
       ...options.tavilySearch,
     }),
   );
+
+  createTaskTools(options.taskTools).forEach((tool) => {
+    registry.register(tool);
+  });
 
   createAlarmTools(options.alarmTools).forEach((tool) => {
     registry.register(tool);

@@ -51,9 +51,19 @@ process.once('SIGTERM', () => {
 const bootstrap = (): void => {
   try {
     const { config } = require('./config') as typeof import('./config');
+    const { taskRepository } = require('./services/task-repository') as typeof import('./services/task-repository');
+    const { schedulerService } = require('./services/scheduler') as typeof import('./services/scheduler');
     const webhookRouter = (require('./routes/webhook') as typeof import('./routes/webhook')).default;
     const chatRouter = (require('./routes/chat') as typeof import('./routes/chat')).default;
     const taskRouter = (require('./routes/tasks') as typeof import('./routes/tasks')).default;
+
+    taskRepository.subscribe((event) => {
+      schedulerService.notifyTasksUpdated(event);
+    });
+    schedulerService.notifyTasksUpdated({
+      action: 'reload',
+      tasks: taskRepository.listAllTasks(),
+    });
 
     const app = express();
 
