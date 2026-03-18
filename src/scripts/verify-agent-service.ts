@@ -190,6 +190,10 @@ const verify = async (): Promise<void> => {
   assert.equal(service.getUserContext('user-1').length, 6);
   assert.deepEqual(service.getRegisteredToolNames(), [
     'search.tavily',
+    'task.create',
+    'task.list',
+    'task.update',
+    'task.delete',
     'create_alarm_session',
     'list_alarms',
     'analyze_alarm',

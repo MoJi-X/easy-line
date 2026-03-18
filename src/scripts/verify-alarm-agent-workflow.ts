@@ -7,6 +7,9 @@ import {
 
 process.env.LINE_CHANNEL_SECRET ??= 'verify-line-secret';
 process.env.LINE_CHANNEL_ACCESS_TOKEN ??= 'verify-line-token';
+process.env.WORKORDER_TENANT_ID = ' ';
+process.env.WORKORDER_PMMS_AUTHORIZATION = ' ';
+process.env.WORKORDER_USER = ' ';
 
 const assert: typeof import('node:assert/strict') = require('node:assert/strict');
 const { AgentService, getWorkOrderGlobalContextAvailability } = require('../services/agent') as typeof import('../services/agent');
@@ -347,7 +350,7 @@ const verify = async (): Promise<void> => {
     assert.deepEqual(isolatedUserResult.usedTools, []);
     assert.equal(
       isolatedUserResult.reply,
-      '当前会话里还没有可分析的告警列表，请先回复“查看当前未处理告警”。',
+      '当前会话里还没有可分析的告警列表，系统运行中可能还没有生成告警。',
     );
     assert.equal(
       service.getSessionContext('alarm-user-2').alarmWorkflow.alarmList.length,
