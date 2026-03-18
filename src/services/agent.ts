@@ -1568,6 +1568,9 @@ export class AgentService {
   ): Promise<ProcessUserMessageResult> {
     const history = this.memoryStore.getUserContext(normalizedInput.userId);
     const requestMessages = [
+      new SystemMessage(
+        `当前用户的 ID 是 "${normalizedInput.userId}"。如果调用任何需要 userId 参数的工具（如创建定时任务等），请严格使用此 ID，不要编造。`,
+      ),
       ...(normalizedInput.channel === "line_webhook"
         ? [new SystemMessage(LINE_CHANNEL_RESPONSE_PROMPT)]
         : []),
