@@ -1,4 +1,5 @@
 import { tool } from "langchain";
+import type { ToolRunnableConfig } from "@langchain/core/tools";
 
 import {
   AlarmAgentClient,
@@ -20,7 +21,7 @@ const DEFAULT_ALARM_LIST_PAGE_SIZE = 20;
 const DEFAULT_ALARM_LIST_STATUS = "";
 const DEFAULT_ANALYZE_MODE = "standard";
 const DEFAULT_ANALYZE_BUSINESS_TYPE = "device_alarm";
-const DEFAULT_ANALYZE_LANGUAGE = "en";
+const DEFAULT_ANALYZE_LANGUAGE = "zh";
 const MAX_ANALYSIS_DEPTH = 5;
 const alarmToolLogger = createAppLogger("alarm-tools");
 
@@ -49,6 +50,18 @@ export interface NormalizedAlarmRecord {
   site_name: string | null;
 }
 
+/**
+ * 面向大模型暴露的精简告警对象。
+ */
+export interface PublicNormalizedAlarmRecord {
+  alarm_code: string | null;
+  created_at: string | null;
+  device_sn: string | null;
+  id: string | number | null;
+  processing_status: string | null;
+  site_name: string | null;
+}
+
 export interface AlarmToolFailure {
   error_type: AlarmToolFailureType;
   message: string;
@@ -65,12 +78,32 @@ export interface CreateAlarmSessionSuccess {
   success: true;
 }
 
+/**
+ * 面向大模型暴露的精简会话创建结果。
+ */
+export interface PublicCreateAlarmSessionSuccess {
+  session_id: string;
+  success: true;
+}
+
 export interface ListAlarmsSuccess {
   alarm_summary_markdown: string;
   alarms: NormalizedAlarmRecord[];
   page: number;
   page_size: number;
   raw: unknown;
+  success: true;
+  total: number;
+}
+
+/**
+ * 面向大模型暴露的精简告警列表结果。
+ */
+export interface PublicListAlarmsSuccess {
+  alarm_summary_markdown: string;
+  alarms: PublicNormalizedAlarmRecord[];
+  page: number;
+  page_size: number;
   success: true;
   total: number;
 }
@@ -84,6 +117,33 @@ export interface AnalyzeAlarmSuccess {
   should_offer_dispatch: boolean | null;
   success: true;
 }
+
+/**
+ * 面向大模型暴露的精简分析结果。
+ */
+export interface PublicAnalyzeAlarmSuccess {
+  analysis_markdown: string;
+  flex_message: FlexMessage;
+  recommended_action_hint: "create_work_order" | null;
+  session_id: string;
+  should_offer_dispatch: boolean | null;
+  success: true;
+}
+
+export type CreateAlarmSessionToolResult =
+  | AlarmToolFailure
+  | CreateAlarmSessionSuccess
+  | PublicCreateAlarmSessionSuccess;
+
+export type ListAlarmsToolResult =
+  | AlarmToolFailure
+  | ListAlarmsSuccess
+  | PublicListAlarmsSuccess;
+
+export type AnalyzeAlarmToolResult =
+  | AlarmToolFailure
+  | AnalyzeAlarmSuccess
+  | PublicAnalyzeAlarmSuccess;
 
 type AlarmTool =
   | ReturnType<typeof createCreateAlarmSessionTool>
@@ -106,6 +166,15 @@ type AnalyzeAlarmToolInput = {
 };
 
 type AnalyzeAlarmInput = AlarmProcessAlarmsRequest;
+type AlarmToolSuccessResult =
+  | CreateAlarmSessionSuccess
+  | ListAlarmsSuccess
+  | AnalyzeAlarmSuccess;
+type AlarmToolResult = AlarmToolFailure | AlarmToolSuccessResult;
+type AlarmToolConfigurableFields = {
+  isInternalBackend?: boolean;
+};
+type AlarmToolCallConfig = ToolRunnableConfig<AlarmToolConfigurableFields>;
 
 const CREATE_ALARM_SESSION_SCHEMA = {
   type: "object",
@@ -733,6 +802,116 @@ const collectAnalysisTextPieces = (
   );
 };
 
+const isInternalBackendCall = (config?: AlarmToolCallConfig): boolean => {
+  return config?.configurable?.isInternalBackend === true;
+};
+
+const sanitizeAlarmToolFailure = (
+  failure: AlarmToolFailure,
+): AlarmToolFailure => {
+  return {
+    success: false,
+    error_type: failure.error_type,
+    message: failure.message,
+    status_code: failure.status_code,
+    partial_analysis: failure.partial_analysis,
+  };
+};
+
+const sanitizeAlarmRecord = (
+  alarm: NormalizedAlarmRecord,
+): PublicNormalizedAlarmRecord => {
+  return {
+    id: alarm.id,
+    device_sn: alarm.device_sn,
+    site_name: alarm.site_name,
+    alarm_code: alarm.alarm_code,
+    processing_status: alarm.processing_status,
+    created_at: alarm.created_at,
+  };
+};
+
+const sanitizeCreateAlarmSessionSuccess = (
+  result: CreateAlarmSessionSuccess,
+): PublicCreateAlarmSessionSuccess => {
+  return {
+    success: true,
+    session_id: result.session_id,
+  };
+};
+
+const sanitizeListAlarmsSuccess = (
+  result: ListAlarmsSuccess,
+): PublicListAlarmsSuccess => {
+  return {
+    success: true,
+    total: result.total,
+    page: result.page,
+    page_size: result.page_size,
+    alarm_summary_markdown: result.alarm_summary_markdown,
+    alarms: result.alarms.map(sanitizeAlarmRecord),
+  };
+};
+
+const sanitizeAnalyzeAlarmSuccess = (
+  result: AnalyzeAlarmSuccess,
+): PublicAnalyzeAlarmSuccess => {
+  return {
+    success: true,
+    session_id: result.session_id,
+    analysis_markdown: result.analysis_markdown,
+    flex_message: result.flex_message,
+    should_offer_dispatch: result.should_offer_dispatch,
+    recommended_action_hint: result.recommended_action_hint,
+  };
+};
+
+function finalizeAlarmToolResult(
+  result: AlarmToolFailure,
+  config?: AlarmToolCallConfig,
+): AlarmToolFailure;
+function finalizeAlarmToolResult(
+  result: CreateAlarmSessionSuccess,
+  config?: AlarmToolCallConfig,
+): CreateAlarmSessionSuccess | PublicCreateAlarmSessionSuccess;
+function finalizeAlarmToolResult(
+  result: ListAlarmsSuccess,
+  config?: AlarmToolCallConfig,
+): ListAlarmsSuccess | PublicListAlarmsSuccess;
+function finalizeAlarmToolResult(
+  result: AnalyzeAlarmSuccess,
+  config?: AlarmToolCallConfig,
+): AnalyzeAlarmSuccess | PublicAnalyzeAlarmSuccess;
+function finalizeAlarmToolResult(
+  result: AlarmToolResult,
+  config?: AlarmToolCallConfig,
+):
+  | AlarmToolFailure
+  | CreateAlarmSessionSuccess
+  | PublicCreateAlarmSessionSuccess
+  | ListAlarmsSuccess
+  | PublicListAlarmsSuccess
+  | AnalyzeAlarmSuccess
+  | PublicAnalyzeAlarmSuccess {
+  if (isInternalBackendCall(config)) {
+    return result;
+  }
+
+  if (result.success === false) {
+    return sanitizeAlarmToolFailure(result);
+  }
+
+  if ("analysis_markdown" in result) {
+    return sanitizeAnalyzeAlarmSuccess(result);
+  }
+
+  if ("alarms" in result) {
+    return sanitizeListAlarmsSuccess(result);
+  }
+
+  return sanitizeCreateAlarmSessionSuccess(result);
+}
+
 const cleanAnalysisMarkdown = (value: string): string => {
   return value
     .replace(/\[DONE\]/g, "")
@@ -891,7 +1070,10 @@ const mapAlarmToolError = (
 
 const createCreateAlarmSessionTool = (client: AlarmAgentClient) => {
   return tool(
-    async (): Promise<CreateAlarmSessionSuccess | AlarmToolFailure> => {
+    async (
+      _input: Record<string, unknown>,
+      config: AlarmToolCallConfig,
+    ): Promise<CreateAlarmSessionToolResult> => {
       const startedAt = Date.now();
       alarmToolLogger.debug('create_alarm_session input', {});
 
@@ -903,10 +1085,13 @@ const createCreateAlarmSessionTool = (client: AlarmAgentClient) => {
           alarmToolLogger.warn('create_alarm_session failed: no session_id', {
             durationMs: Date.now() - startedAt,
           });
-          return buildToolFailure(
-            "alarm_session_failed",
-            "Alarm backend returned no session_id.",
-            { raw: payload },
+          return finalizeAlarmToolResult(
+            buildToolFailure(
+              "alarm_session_failed",
+              "Alarm backend returned no session_id.",
+              { raw: payload },
+            ),
+            config,
           );
         }
 
@@ -921,7 +1106,7 @@ const createCreateAlarmSessionTool = (client: AlarmAgentClient) => {
           durationMs: Date.now() - startedAt,
         });
 
-        return result;
+        return finalizeAlarmToolResult(result, config);
       } catch (error) {
         alarmToolLogger.warn('create_alarm_session failed', {
           durationMs: Date.now() - startedAt,
@@ -929,7 +1114,7 @@ const createCreateAlarmSessionTool = (client: AlarmAgentClient) => {
             error instanceof AlarmAgentClientError ? error.type : 'UNKNOWN',
         });
 
-        return mapAlarmToolError("session", error);
+        return finalizeAlarmToolResult(mapAlarmToolError("session", error), config);
       }
     },
     {
@@ -945,7 +1130,8 @@ const createListAlarmsTool = (client: AlarmAgentClient) => {
   return tool(
     async (
       input: Record<string, unknown>,
-    ): Promise<ListAlarmsSuccess | AlarmToolFailure> => {
+      config: AlarmToolCallConfig,
+    ): Promise<ListAlarmsToolResult> => {
       const startedAt = Date.now();
       const normalizedInput = normalizeListAlarmsInput(input);
 
@@ -965,7 +1151,7 @@ const createListAlarmsTool = (client: AlarmAgentClient) => {
           durationMs: Date.now() - startedAt,
         });
 
-        return result;
+        return finalizeAlarmToolResult(result, config);
       } catch (error) {
         alarmToolLogger.warn('list_alarms failed', {
           durationMs: Date.now() - startedAt,
@@ -973,7 +1159,7 @@ const createListAlarmsTool = (client: AlarmAgentClient) => {
             error instanceof AlarmAgentClientError ? error.type : 'UNKNOWN',
         });
 
-        return mapAlarmToolError('list', error);
+        return finalizeAlarmToolResult(mapAlarmToolError('list', error), config);
       }
     },
     {
@@ -993,7 +1179,8 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
   return tool(
     async (
       input: Record<string, unknown>,
-    ): Promise<AnalyzeAlarmSuccess | AlarmToolFailure> => {
+      config: AlarmToolCallConfig,
+    ): Promise<AnalyzeAlarmToolResult> => {
       const startedAt = Date.now();
       const normalizedInput = normalizeAnalyzeAlarmInput(input);
 
@@ -1014,7 +1201,7 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
           durationMs: Date.now() - startedAt,
           errorType: normalizedInput.error_type,
         });
-        return normalizedInput;
+        return finalizeAlarmToolResult(normalizedInput, config);
       }
 
       try {
@@ -1027,12 +1214,15 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
             eventCount: streamResult.events.length,
             durationMs: Date.now() - startedAt,
           });
-          return buildToolFailure(
-            'alarm_analysis_failed',
-            'Alarm analysis stream completed without usable analysis content.',
-            {
-              raw_events: streamResult.events,
-            },
+          return finalizeAlarmToolResult(
+            buildToolFailure(
+              'alarm_analysis_failed',
+              'Alarm analysis stream completed without usable analysis content.',
+              {
+                raw_events: streamResult.events,
+              },
+            ),
+            config,
           );
         }
 
@@ -1074,7 +1264,7 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
           durationMs: Date.now() - startedAt,
         });
 
-        return {
+        return finalizeAlarmToolResult({
           success: true,
           session_id: normalizedInput.session_id,
           analysis_markdown: analysisMarkdown,
@@ -1082,7 +1272,7 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
           raw_events: streamResult.events,
           should_offer_dispatch: shouldOfferDispatch,
           recommended_action_hint: recommendedActionHint,
-        };
+        }, config);
       } catch (error) {
         alarmToolLogger.warn('analyze_alarm failed', {
           durationMs: Date.now() - startedAt,
@@ -1090,7 +1280,10 @@ const createAnalyzeAlarmTool = (client: AlarmAgentClient) => {
             error instanceof AlarmAgentClientError ? error.type : 'UNKNOWN',
         });
 
-        return mapAlarmToolError('analysis', error);
+        return finalizeAlarmToolResult(
+          mapAlarmToolError('analysis', error),
+          config,
+        );
       }
     },
     {

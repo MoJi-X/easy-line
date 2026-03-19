@@ -5,6 +5,7 @@ import {
   type BaseMessage,
 } from "@langchain/core/messages";
 import type { LanguageModelLike } from "@langchain/core/language_models/base";
+import type { ToolRunnableConfig } from "@langchain/core/tools";
 import { ChatOpenAI } from "@langchain/openai";
 import { createAgent } from "langchain";
 
@@ -254,7 +255,7 @@ export class AgentServiceError extends Error {
 }
 
 type InvokableTool = {
-  invoke: (input: unknown) => Promise<unknown>;
+  invoke: (input: unknown, config?: ToolRunnableConfig) => Promise<unknown>;
   name: string;
 };
 
@@ -1072,7 +1073,9 @@ export class AgentService {
     name: AgentToolName,
     input: unknown,
   ): Promise<unknown> {
-    return this.getRequiredTool(name).invoke(input);
+    return this.getRequiredTool(name).invoke(input, {
+      configurable: { isInternalBackend: true },
+    });
   }
 
   private handleTaskListIntent(userId: string): ProcessUserMessageResult {

@@ -8,7 +8,7 @@ const { createAlarmTools } = require('../tools/alarm-tools') as typeof import('.
 const { createToolRegistry } = require('../tools') as typeof import('../tools');
 
 type GenericTool = {
-  invoke: (input: unknown) => Promise<unknown>;
+  invoke: (input: unknown, config?: unknown) => Promise<unknown>;
   name: string;
 };
 
@@ -225,6 +225,10 @@ const verify = async (): Promise<void> => {
 
     assert.deepEqual(registry.getNames(), [
       'search.tavily',
+      'task.create',
+      'task.list',
+      'task.update',
+      'task.delete',
       'create_alarm_session',
       'list_alarms',
       'analyze_alarm',
@@ -242,12 +246,29 @@ const verify = async (): Promise<void> => {
 
     assert.equal(sessionResult.success, true);
     assert.equal(sessionResult.session_id, 'session-123');
+    assert.equal('raw' in sessionResult, false);
+
+    const internalSessionResult = (await createAlarmSessionTool.invoke(
+      {},
+      {
+        configurable: { isInternalBackend: true },
+      },
+    )) as {
+      raw: unknown;
+      session_id: string;
+      success: boolean;
+    };
+
+    assert.equal(internalSessionResult.success, true);
+    assert.equal(internalSessionResult.session_id, 'session-123');
+    assert.ok('raw' in internalSessionResult);
 
     const listResult = (await listAlarmsTool.invoke({})) as {
       alarm_summary_markdown: string;
-      alarms: Array<{ device_sn: string; id: number }>;
+      alarms: Array<{ device_sn: string; id: number; raw?: unknown }>;
       success: boolean;
       total: number;
+      raw?: unknown;
     };
 
     assert.equal(listResult.success, true);
@@ -255,11 +276,28 @@ const verify = async (): Promise<void> => {
     assert.equal(listResult.alarms[0]?.id, 101);
     assert.equal(listResult.alarms[0]?.device_sn, 'INV-0001');
     assert.match(listResult.alarm_summary_markdown, /1\. 告警ID/u);
+    assert.equal('raw' in listResult, false);
+    assert.equal('raw' in (listResult.alarms[0] ?? {}), false);
     assert.deepEqual(getLastListRequest(), {
       status: '',
       page: '1',
       page_size: '20',
     });
+
+    const internalListResult = (await listAlarmsTool.invoke(
+      {},
+      {
+        configurable: { isInternalBackend: true },
+      },
+    )) as {
+      alarms: Array<{ id: number; raw: Record<string, unknown> }>;
+      raw: unknown;
+      success: boolean;
+    };
+
+    assert.equal(internalListResult.success, true);
+    assert.ok('raw' in internalListResult);
+    assert.ok('raw' in (internalListResult.alarms[0] ?? {}));
 
     const analyzeResult = (await analyzeAlarmTool.invoke({
       session_id: 'session-123',
@@ -275,16 +313,18 @@ const verify = async (): Promise<void> => {
       },
     })) as {
       analysis_markdown: string;
-      raw_events: unknown[];
+      raw_events?: unknown[];
+      recommended_action_hint: string | null;
       should_offer_dispatch: boolean | null;
       success: boolean;
     };
 
     assert.equal(analyzeResult.success, true);
     assert.equal(analyzeResult.should_offer_dispatch, true);
+    assert.equal(analyzeResult.recommended_action_hint, 'create_work_order');
     assert.match(analyzeResult.analysis_markdown, /分析结论/u);
     assert.match(analyzeResult.analysis_markdown, /建议派单/u);
-    assert.ok(analyzeResult.raw_events.length >= 2);
+    assert.equal('raw_events' in analyzeResult, false);
     assert.deepEqual(getLastProcessRequest(), {
       session_id: 'session-123',
       alarms: [
@@ -301,6 +341,31 @@ const verify = async (): Promise<void> => {
       language: 'zh',
     });
 
+    const internalAnalyzeResult = (await analyzeAlarmTool.invoke(
+      {
+        session_id: 'session-123',
+        alarm: {
+          id: 101,
+          device_sn: 'INV-0001',
+          siteName: 'Bangkok PV Site',
+          raw_data: JSON.stringify({
+            deviceSn: 'INV-0001',
+            siteName: 'Bangkok PV Site',
+            alarm_code: '130',
+          }),
+        },
+      },
+      {
+        configurable: { isInternalBackend: true },
+      },
+    )) as {
+      raw_events: unknown[];
+      success: boolean;
+    };
+
+    assert.equal(internalAnalyzeResult.success, true);
+    assert.ok(internalAnalyzeResult.raw_events.length >= 2);
+
     const interruptedAnalyzeResult = (await analyzeAlarmTool.invoke({
       session_id: 'session-123',
       alarm: {
@@ -313,12 +378,38 @@ const verify = async (): Promise<void> => {
     })) as {
       error_type: string;
       partial_analysis?: string;
+      raw_events?: unknown[];
       success: boolean;
     };
 
     assert.equal(interruptedAnalyzeResult.success, false);
     assert.equal(interruptedAnalyzeResult.error_type, 'alarm_analysis_failed');
     assert.match(interruptedAnalyzeResult.partial_analysis ?? '', /INV-999/u);
+    assert.equal('raw_events' in interruptedAnalyzeResult, false);
+
+    const internalInterruptedAnalyzeResult = (await analyzeAlarmTool.invoke(
+      {
+        session_id: 'session-123',
+        alarm: {
+          id: 999,
+          device_sn: 'INV-999',
+          raw_data: JSON.stringify({
+            deviceSn: 'INV-999',
+          }),
+        },
+      },
+      {
+        configurable: { isInternalBackend: true },
+      },
+    )) as {
+      error_type: string;
+      raw_events?: unknown[];
+      success: boolean;
+    };
+
+    assert.equal(internalInterruptedAnalyzeResult.success, false);
+    assert.equal(internalInterruptedAnalyzeResult.error_type, 'alarm_analysis_failed');
+    assert.ok((internalInterruptedAnalyzeResult.raw_events?.length ?? 0) >= 1);
 
     const missingIdResult = (await analyzeAlarmTool.invoke({
       session_id: 'session-123',
@@ -336,6 +427,7 @@ const verify = async (): Promise<void> => {
     assert.equal(missingIdResult.success, false);
     assert.equal(missingIdResult.error_type, 'invalid_tool_input');
     assert.match(missingIdResult.message, /id must not be empty/u);
+    assert.equal('raw' in missingIdResult, false);
 
     console.info('Alarm tools verification passed.');
   } finally {
