@@ -67,10 +67,14 @@ const TASK_CREATE_REPLY_MISSING_SCOPE =
   "还缺少告警范围，请补充例如“当前告警信息”。";
 const TASK_CREATE_REPLY_MISSING_TIME =
   "还缺少执行时间，请补充例如“08:00”或“每天早上 8 点”。系统会自动转换为 6 字段 cron。";
+const ALARM_WORKFLOW_GUIDANCE_REPLY =
+  '告警链路支持“查看告警信息”“查看当前未处理告警信息”或“分析第 1 条告警信息”这样的指令。';
 const CREATE_ALARM_SESSION_TOOL_NAME = "create_alarm_session";
 const LIST_ALARMS_TOOL_NAME = "list_alarms";
 const ANALYZE_ALARM_TOOL_NAME = "analyze_alarm";
 const CREATE_WORK_ORDER_TOOL_NAME = "create_work_order";
+const RUNTIME_AGENT_TOOL_NAMES = ["search.tavily"] as const;
+const RUNTIME_AGENT_TOOL_NAME_SET = new Set<string>(RUNTIME_AGENT_TOOL_NAMES);
 const agentLogger = createAppLogger("agent");
 
 const AGENT_SYSTEM_PROMPT = [
@@ -80,6 +84,7 @@ const AGENT_SYSTEM_PROMPT = [
   "如果 `search.tavily` 返回搜索不可用、超时或未配置，请直接告诉用户当前无法获取最新外部信息，不要编造答案。",
   "告警链路已经由系统状态机接管：查看告警、分析第 N 条告警、确认或取消建单会由系统显式编排。",
   "任务链路已经接入：`/task` 命令以及创建、查询告警定时任务的自然语言请求会由系统显式编排。",
+  "runtime agent 仅负责非业务编排问答与实时搜索；告警、任务、建单相关操作继续由系统显式编排。",
   "如果用户想直接建单，但还没有完成告警分析和确认节点，请明确提示需要先查看并分析具体告警。",
   "工单创建会在确认节点通过后由系统显式调用 `create_work_order`，不要在未确认时自行调用，也不要伪造工单结果。",
   "对于不需要实时外部信息的稳定问题，可以直接回答。",
@@ -94,14 +99,13 @@ const LINE_CHANNEL_RESPONSE_PROMPT = [
 ].join("\n");
 
 const ALARM_LIST_PATTERNS = [
-  /^(请)?(帮我|给我)?(查看|查询|列出|展示|显示|看看|看一下)(当前)?(未处理)?告警$/u,
-  /^(请)?(帮我|给我)?(查看|查询|列出|展示|显示|看看|看一下)(当前)?(未处理)?告警列表$/u,
-  /^(当前)?(未处理)?告警$/u,
-  /^(当前)?(未处理)?告警列表$/u,
-  /^看告警$/u,
+  /^(请)?(帮我|给我)?(查看|查询|列出|展示|显示|看看|看一下|看下)(当前)?(未处理)?告警(列表|信息|情况)?$/u,
+  /^(我想|我要)(查看|查询|列出|展示|显示|看看|看一下|看下)(当前)?(未处理)?告警(列表|信息|情况)?$/u,
+  /^(当前)?(未处理)?告警(列表|信息|情况)?$/u,
+  /^看告警(列表|信息|情况)?$/u,
 ];
 const ALARM_ANALYZE_PREFIX_PATTERN =
-  /^(请)?(帮我|给我)?(分析|诊断|排查|看下|看看)/u;
+  /^(?:(?:请)?(?:帮我|给我)?|(?:我想|我要))?(分析|诊断|排查|看下|看看)/u;
 const ALARM_INDEX_PATTERN =
   /第\s*([0-9一二三四五六七八九十两零]+)\s*(条|个|项)/u;
 const CURRENT_ALARM_PATTERN = /(这条|这一条|该告警|当前告警|当前这条)/u;
@@ -378,27 +382,29 @@ const parseChineseOrdinal = (token: string): number | null => {
 };
 
 const parseAlarmListIntent = (message: string): AlarmListIntent | null => {
-  const trimmedMessage = message.trim();
+  const normalizedMessage = normalizeIntentText(message);
 
-  if (!ALARM_LIST_PATTERNS.some((pattern) => pattern.test(trimmedMessage))) {
+  if (
+    !ALARM_LIST_PATTERNS.some((pattern) => pattern.test(normalizedMessage))
+  ) {
     return null;
   }
 
   return {
-    status: /未处理/u.test(trimmedMessage) ? UNTREATED_ALARM_STATUS : "",
+    status: /未处理/u.test(normalizedMessage) ? UNTREATED_ALARM_STATUS : "",
   };
 };
 
 const parseAlarmAnalyzeIntent = (
   message: string,
 ): AlarmAnalyzeIntent | null => {
-  const trimmedMessage = message.trim();
+  const normalizedMessage = normalizeIntentText(message);
 
-  if (!ALARM_ANALYZE_PREFIX_PATTERN.test(trimmedMessage)) {
+  if (!ALARM_ANALYZE_PREFIX_PATTERN.test(normalizedMessage)) {
     return null;
   }
 
-  const indexMatch = trimmedMessage.match(ALARM_INDEX_PATTERN);
+  const indexMatch = normalizedMessage.match(ALARM_INDEX_PATTERN);
 
   if (indexMatch) {
     const parsedIndex = parseChineseOrdinal(indexMatch[1] ?? "");
@@ -412,8 +418,8 @@ const parseAlarmAnalyzeIntent = (
   }
 
   if (
-    CURRENT_ALARM_PATTERN.test(trimmedMessage) ||
-    /告警/u.test(trimmedMessage)
+    CURRENT_ALARM_PATTERN.test(normalizedMessage) ||
+    /告警/u.test(normalizedMessage)
   ) {
     return {
       type: "current",
@@ -421,6 +427,22 @@ const parseAlarmAnalyzeIntent = (
   }
 
   return null;
+};
+
+const isPotentialAlarmWorkflowMessage = (message: string): boolean => {
+  const normalizedMessage = normalizeIntentText(message);
+
+  if (!/告警/u.test(normalizedMessage)) {
+    return false;
+  }
+
+  return (
+    /(查看|查询|列出|展示|显示|分析|诊断|排查|看下|看看|看一下)/u.test(
+      normalizedMessage,
+    ) ||
+    /(当前|未处理|信息|列表|情况)/u.test(normalizedMessage) ||
+    ALARM_INDEX_PATTERN.test(normalizedMessage)
+  );
 };
 
 const buildDailyCronExpression = (
@@ -1047,9 +1069,15 @@ export class AgentService {
     return this.toolRegistry.getNames();
   }
 
+  private getRuntimeAgentTools(): AgentTools {
+    return this.toolRegistry
+      .getAll()
+      .filter((tool) => RUNTIME_AGENT_TOOL_NAME_SET.has(tool.name));
+  }
+
   private getOrCreateRuntimeAgent(): AgentRuntime {
     if (!this.runtimeAgent) {
-      this.runtimeAgent = this.createRuntimeAgent(this.toolRegistry.getAll());
+      this.runtimeAgent = this.createRuntimeAgent(this.getRuntimeAgentTools());
     }
 
     return this.runtimeAgent;
@@ -1532,6 +1560,13 @@ export class AgentService {
     const workflow = this.memoryStore.getAlarmWorkflow(input.userId);
 
     if (workflow.pendingConfirmation !== "create_work_order") {
+      if (isPotentialAlarmWorkflowMessage(input.message)) {
+        return {
+          reply: ALARM_WORKFLOW_GUIDANCE_REPLY,
+          usedTools: [],
+        };
+      }
+
       return null;
     }
 
@@ -1604,6 +1639,7 @@ export class AgentService {
       historyMessageCount: history.length,
       requestMessageCount: history.length + 1,
       registeredToolCount: this.toolRegistry.getNames().length,
+      runtimeToolCount: this.getRuntimeAgentTools().length,
     });
 
     try {
