@@ -23,6 +23,18 @@
    npm run start
    ```
 
+## 容器化启动
+1. 先准备好 `.env`，建议直接复制 `.env.example` 后填写真实值。
+2. 使用 Docker Compose 构建并启动：
+   ```bash
+   docker compose up --build
+   ```
+3. 停止服务：
+   ```bash
+   docker compose down
+   ```
+4. 容器运行时会把日志写到 `logs/`，并把任务持久化到 `src/config/tasks.json`，便于重启后继续使用。
+
 ## 环境变量说明
 - `LINE_CHANNEL_SECRET`：LINE Messaging API Channel Secret。
 - `LINE_CHANNEL_ACCESS_TOKEN`：LINE Messaging API Channel Access Token。

@@ -1,0 +1,17 @@
+services:
+  easy-line:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      TZ: Asia/Shanghai
+      PORT: ${PORT:-3000}
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    volumes:
+      - ./logs:/app/logs
+      - ./src/config:/app/src/config
+    restart: unless-stopped

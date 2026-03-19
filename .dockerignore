@@ -1,0 +1,9 @@
+node_modules
+dist
+logs
+.env
+.git
+.vscode
+trace_output.txt
+npm-debug.log*
+coverage
