@@ -8,6 +8,7 @@ import type {
 } from './task-repository';
 import type { AgentService, ProcessUserMessageResult } from './agent';
 import { buildTextMessage, type LineService } from './line';
+import { getLocalIsoString } from '../utils/date';
 
 export interface SchedulerRefreshSnapshot {
   action: TaskRepositoryChangeEvent['action'];
@@ -79,7 +80,7 @@ export class SchedulerService {
       taskCount: event.tasks.length,
       taskId: event.task?.id,
       tasks: event.tasks.map((task) => cloneTask(task)),
-      updatedAt: new Date().toISOString(),
+      updatedAt: getLocalIsoString(),
     };
 
     this.lastRefresh = snapshot;
@@ -127,6 +128,7 @@ export class SchedulerService {
             },
             {
               scheduled: false,
+              timezone: process.env.TZ || 'Asia/Shanghai',
             },
           );
 
@@ -183,7 +185,7 @@ export class SchedulerService {
       this.recordExecution({
         cron: task.cron,
         durationMs: Date.now() - startedAt,
-        executedAt: new Date().toISOString(),
+        executedAt: getLocalIsoString(),
         message: agentReply,
         ownerUserId: task.ownerUserId,
         status: 'success',
@@ -203,7 +205,7 @@ export class SchedulerService {
       this.recordExecution({
         cron: task.cron,
         durationMs: Date.now() - startedAt,
-        executedAt: new Date().toISOString(),
+        executedAt: getLocalIsoString(),
         message: executionMessage,
         ownerUserId: task.ownerUserId,
         status: 'failed',

@@ -10,6 +10,7 @@ import cron from 'node-cron';
 
 import { AppError, type AppErrorDetail } from '../errors/app-error';
 import { createAppLogger } from '../utils/app-logger';
+import { getLocalIsoString } from '../utils/date';
 import { maskUserId } from '../utils/logger';
 
 export const TASKS_CONFIG_PATH = path.resolve(
@@ -329,7 +330,7 @@ export class TaskRepository {
     const source = input.source
       ? assertRuntimeTaskSource(input.source)
       : 'api';
-    const timestamp = this.now().toISOString();
+    const timestamp = getLocalIsoString(this.now());
     const task: AlarmFetchTask = {
       id: this.generateId(),
       type: ALARM_FETCH_TASK_TYPE,
@@ -389,7 +390,7 @@ export class TaskRepository {
       cron: taskCron,
       enabled,
       name: buildTaskName(alertScope),
-      updatedAt: this.now().toISOString(),
+      updatedAt: getLocalIsoString(this.now()),
     };
     const nextTasksById = new Map(this.tasksById);
 
