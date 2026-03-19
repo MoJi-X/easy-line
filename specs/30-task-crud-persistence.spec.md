@@ -52,6 +52,7 @@
 - outputs：`src/tools/task-tools.ts`、任务工具输入输出契约、Slash Command 解析规则。
 - dependencies：TASK-001、TASK-002、`specs/20-agent-orchestrator.spec.md` 的 AGT-003。
 - implementation notes：首轮工具固定为 `task.create`、`task.list`、`task.update`、`task.delete`；本切片验收优先关注 `task.create` 与 `task.list`；Slash Command 采用确定性参数格式，并支持 `cron="0 0 8 * * *"` 这类带引号值；自然语言缺少告警范围或时间时，Agent 必须先追问补全，再把简单每日时间表达转换为 6 字段 cron；同一个仓储结果必须同时支撑 `/task` 和自然语言回复，避免两套查询口径。
+- implementation notes：首轮工具固定为 `task.create`、`task.list`、`task.update`、`task.delete`；本切片验收优先关注 `task.create` 与 `task.list`；Slash Command 采用确定性参数格式，并支持 `cron="0 0 8 * * *"` 这类带引号值；自然语言缺少告警范围或时间时，Agent 必须先追问补全，再把简单每日时间表达转换为 6 字段 cron；同一个仓储结果必须同时支撑 `/task` 和自然语言回复，避免两套查询口径；显式任务编排仍优先，但对于未命中显式规则的多语言或自由表达任务请求，允许 runtime agent 调用 `task.*` Tool 兜底。
 - acceptance criteria：`/task create` 与 `/task list` 能稳定创建和查询“获取告警信息”定时任务；自然语言创建任务请求和查询任务请求都能映射到对应工具或同一仓储服务；若本轮未完成 update/delete，自然语言与命令链路的 create/list 仍须完整可验。
 
 ### TASK-004 与调度器的刷新契约
@@ -79,8 +80,9 @@
 
 - scope：本轮目标为完成 `TASK-001`、`TASK-002`，并优先补齐 `TASK-003` 中“通过 `/task` 与自然语言创建、查询告警定时任务”的能力；update/delete 与完整执行链路不作为本轮主验收阻塞项。
 - decision：`/api/tasks`、`/task` 命令与自然语言任务入口共用同一个 `TaskRepository` 和任务服务；`src/config/tasks.json` 统一切换为告警任务集合；持久化与对外接口统一使用 6 字段 `cron`。
+- decision：runtime agent 恢复 `task.create`、`task.list`、`task.update`、`task.delete` 的可见性，用于英文或自由表达下的任务 Tool 兜底；但显式任务编排与 `/task` 命令仍是优先入口，避免影响现有中文规则链路。
 - deferred：告警定时任务的实际拉取、主动推送、复杂筛选、手动 `/api/tasks/:taskId/execute`、执行记录详情延后到 `specs/35-alarm-scheduler-lifecycle.spec.md` 及后续切片。
-- validation：本轮验证以 `npm run build`、任务仓储/API 创建查询验证、`/task create`/`/task list` 验证、自然语言创建/查询验证为主，确保两条入口都能落到同一持久化结果。
+- validation：本轮验证以 `npm run build`、任务仓储/API 创建查询验证、`/task create`/`/task list` 验证、自然语言创建/查询验证为主，确保显式任务编排与 runtime `task.*` 兜底都能落到同一持久化结果。
 
 ## 当前实现基线
 

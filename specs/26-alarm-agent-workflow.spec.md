@@ -70,13 +70,13 @@
 - scope: 本轮实现 `ALARM-WF-001`、`ALARM-WF-002`、`ALARM-WF-003`、`ALARM-WF-004`，在 `AgentService` 中补齐用户级会话容器、告警意图路由、分析后的确认节点和全局建单配置检查。
 - decision: 告警状态机收敛到 `src/services/agent.ts` 的显式编排层，优先拦截“查看告警”“分析第 N 条告警”“确认/取消建单”，其他消息继续走现有 LangChain Agent。
 - decision: 告警列表意图不再依赖 `list_alarms` 的隐式默认过滤；只有用户明确要求“未处理告警”时才显式传 `status='Untreated'`，普通“查看告警”保持默认空字符串筛选。
-- decision: 告警列表意图扩展到“查看/查询/展示/列出/看看 + 告警 + 信息/列表/情况”等自然表达；命令式告警消息若未命中具体列表、分析或确认节点，统一返回告警链路引导，不再落到 runtime agent 兜底分析。
+- decision: 告警列表意图扩展到“查看/查询/展示/列出/看看 + 告警 + 信息/列表/情况”等自然表达；命令式告警消息若未命中具体列表、分析或确认节点，优先进入无 Tool 的 LLM 告警意图归一化，再回落到显式编排层，不直接放行 runtime agent 执行告警 Tool。
 - decision: 会话状态按 `userId` 统一归档为 `messages + alarmWorkflow`，其中仅保存 `alarmSessionId`、`alarmList`、`selectedAlarm`、`lastAnalysisMarkdown`、`pendingConfirmation`、`lastWorkOrderResult`，不落 `tenant_id`、`pmms_authorization`、`user`。
 - decision: 用户确认建单时只检查 `config.workorderTenantId`、`config.workorderPmmsAuthorization`、`config.workorderUser`；若任一缺失，固定回复“当前未配置全局建单上下文，暂时只能完成告警分析”，且不伪造建单成功。
-- decision: runtime agent 的可见工具收敛为 `search.tavily`；告警、任务、建单相关 Tool 仅允许由显式状态机和编排层调用，避免模型自行串联业务 Tool 并把工具调用文本直接暴露给用户。
+- decision: runtime agent 不暴露告警与建单相关 Tool，避免模型自行串联 `list_alarms -> analyze_alarm -> create_work_order`；但恢复 `task.*` Tool 用于多语言或自由表达的定时任务兜底，显式任务编排仍优先。
 - deferred: 真实 `create_work_order` Tool、Dify Workflow Client、字段映射与结果回写已在 `specs/27-workorder-dispatch.spec.md` 落地；本 spec 继续只负责确认节点与全局建单配置检查，不重复下沉建单实现。
 - validation: 新增 `src/scripts/verify-alarm-agent-workflow.ts`，通过本地 mock 告警 HTTP/SSE 服务验证 `/chat` 与 Webhook 共用的 `list_alarms -> analyze_alarm -> wait_user_confirmation` 主链路，以及跨用户隔离和缺失全局建单配置时的稳定提示。
-- validation: 本次快速迭代不新增自动化验证脚本，优先通过 `/chat` 手工回归“查看告警信息 -> 分析第一条告警信息”以及普通实时问答仍可触发 `search.tavily`。
+- validation: 本次快速迭代不新增自动化验证脚本，优先通过 `/chat` 手工回归“查看告警信息 -> 分析第一条告警信息”“show me current alarms -> analyze the first alarm”以及普通实时问答仍可触发 `search.tavily`。
 
 ## 当前实现基线
 - 统一 Agent 已升级为用户级会话容器，消息历史仍只保留最近 3 轮，同时按 `userId` 挂载 `alarmWorkflow` 业务状态。

@@ -419,7 +419,7 @@ const createTaskCreateTool = (taskRepository: TaskRepository) => {
     {
       name: TASK_CREATE_TOOL_NAME,
       description:
-        "为当前用户创建一个告警信息定时任务，输入必须包含告警范围 alertScope 和 6 字段 cron 表达式。",
+        "为当前用户创建一个告警信息定时任务，必须传入当前会话 userId、告警范围 alertScope 和 6 字段 cron 表达式；不要编造 userId、alertScope 或 cron。",
       schema: CREATE_TASK_SCHEMA,
     },
   );
@@ -458,7 +458,8 @@ const createTaskListTool = (taskRepository: TaskRepository) => {
     },
     {
       name: TASK_LIST_TOOL_NAME,
-      description: "查询当前用户已有的告警信息定时任务列表。",
+      description:
+        "查询当前用户已有的告警信息定时任务列表，必须使用当前会话的 userId，不要编造其他用户。",
       schema: LIST_TASK_SCHEMA,
     },
   );
@@ -502,7 +503,7 @@ const createTaskUpdateTool = (taskRepository: TaskRepository) => {
     {
       name: TASK_UPDATE_TOOL_NAME,
       description:
-        "更新当前用户的告警信息定时任务，可修改 alertScope、cron 或 enabled。",
+        "更新当前用户的告警信息定时任务，可修改 alertScope、cron 或 enabled；必须使用当前会话 userId，不要编造 taskId、alertScope 或 cron。",
       schema: UPDATE_TASK_SCHEMA,
     },
   );
@@ -543,7 +544,8 @@ const createTaskDeleteTool = (taskRepository: TaskRepository) => {
     },
     {
       name: TASK_DELETE_TOOL_NAME,
-      description: "删除当前用户自己的告警信息定时任务。",
+      description:
+        "删除当前用户自己的告警信息定时任务，必须使用当前会话 userId，不要编造其他用户或 taskId。",
       schema: DELETE_TASK_SCHEMA,
     },
   );

@@ -32,7 +32,9 @@ import {
 } from "../tools";
 import {
   TASK_CREATE_TOOL_NAME,
+  TASK_DELETE_TOOL_NAME,
   TASK_LIST_TOOL_NAME,
+  TASK_UPDATE_TOOL_NAME,
   buildTaskCreatedReply,
   buildTaskListReply,
   tryHandleTaskCommand,
@@ -73,8 +75,18 @@ const CREATE_ALARM_SESSION_TOOL_NAME = "create_alarm_session";
 const LIST_ALARMS_TOOL_NAME = "list_alarms";
 const ANALYZE_ALARM_TOOL_NAME = "analyze_alarm";
 const CREATE_WORK_ORDER_TOOL_NAME = "create_work_order";
-const RUNTIME_AGENT_TOOL_NAMES = ["search.tavily"] as const;
+const TASK_RUNTIME_TOOL_NAMES = [
+  TASK_CREATE_TOOL_NAME,
+  TASK_LIST_TOOL_NAME,
+  TASK_UPDATE_TOOL_NAME,
+  TASK_DELETE_TOOL_NAME,
+] as const;
+const RUNTIME_AGENT_TOOL_NAMES = [
+  "search.tavily",
+  ...TASK_RUNTIME_TOOL_NAMES,
+] as const;
 const RUNTIME_AGENT_TOOL_NAME_SET = new Set<string>(RUNTIME_AGENT_TOOL_NAMES);
+const TASK_RUNTIME_TOOL_NAME_SET = new Set<string>(TASK_RUNTIME_TOOL_NAMES);
 const agentLogger = createAppLogger("agent");
 
 const AGENT_SYSTEM_PROMPT = [
@@ -84,10 +96,27 @@ const AGENT_SYSTEM_PROMPT = [
   "如果 `search.tavily` 返回搜索不可用、超时或未配置，请直接告诉用户当前无法获取最新外部信息，不要编造答案。",
   "告警链路已经由系统状态机接管：查看告警、分析第 N 条告警、确认或取消建单会由系统显式编排。",
   "任务链路已经接入：`/task` 命令以及创建、查询告警定时任务的自然语言请求会由系统显式编排。",
-  "runtime agent 仅负责非业务编排问答与实时搜索；告警、任务、建单相关操作继续由系统显式编排。",
+  "runtime agent 可以继续处理普通问答、实时搜索，以及多语言或自由表达的定时任务请求。",
+  "runtime agent 不要尝试执行任何告警分析或建单操作；告警与建单相关动作继续由系统显式编排。",
+  "如果需要使用 task 工具，必须基于当前用户，不要编造 userId、cron 或 alertScope；缺少必要字段时先追问或依赖工具返回稳定错误。",
   "如果用户想直接建单，但还没有完成告警分析和确认节点，请明确提示需要先查看并分析具体告警。",
   "工单创建会在确认节点通过后由系统显式调用 `create_work_order`，不要在未确认时自行调用，也不要伪造工单结果。",
   "对于不需要实时外部信息的稳定问题，可以直接回答。",
+].join("\n");
+
+const ALARM_INTENT_FALLBACK_PROMPT = [
+  "你是告警工作流意图分类器，只负责把用户消息归一化为 JSON。",
+  "不要回答问题，不要输出解释，不要输出 Markdown，不要输出工具名，不要输出 <longcat_tool_call>。",
+  "你只能输出一个 JSON 对象，字段仅允许 type、index、status。",
+  'type 只能是 "list"、"analyze_index"、"analyze_current"、"confirm"、"cancel"、"none"。',
+  'status 仅在 type="list" 时使用，值只能是 "" 或 "Untreated"。',
+  "index 仅在 type=\"analyze_index\" 时使用，必须是正整数。",
+  "当用户表达查看当前告警、查看未处理告警、列出告警、show alarms、show untreated alarms 等意思时，返回 list。",
+  "当用户表达分析第 N 条、analyze the first alarm、analyze alarm 2 等意思时，返回 analyze_index 或 analyze_current。",
+  "当用户表达 yes, confirm, create it, build the work order 时，只有在 pendingConfirmation=true 的上下文里才返回 confirm。",
+  "当用户表达 no, cancel, not now, keep watching 时，只有在 pendingConfirmation=true 的上下文里才返回 cancel。",
+  "如果消息是定时任务、schedule、reminder、task、cron 相关请求，必须返回 none。",
+  "如果消息不是告警工作流意图，也必须返回 none。",
 ].join("\n");
 
 const LINE_CHANNEL_RESPONSE_PROMPT = [
@@ -192,6 +221,18 @@ type AlarmAnalyzeIntent =
       index: number;
       type: "index";
     };
+type AlarmIntentFallbackType =
+  | "list"
+  | "analyze_index"
+  | "analyze_current"
+  | "confirm"
+  | "cancel"
+  | "none";
+type AlarmIntentFallbackResult = {
+  index?: number;
+  status?: "" | typeof UNTREATED_ALARM_STATUS;
+  type: AlarmIntentFallbackType;
+};
 type TaskListIntent = {
   type: "list";
 };
@@ -335,6 +376,14 @@ const normalizeIntentText = (message: string): string => {
   return message.trim().replace(/[，。！？、,.!?；;：:\s]/gu, "");
 };
 
+const normalizeLooseIntentText = (message: string): string => {
+  return message
+    .trim()
+    .toLowerCase()
+    .replace(/[，。！？、,.!?；;：:]/gu, " ")
+    .replace(/\s+/gu, " ");
+};
+
 const parseChineseOrdinal = (token: string): number | null => {
   if (/^\d+$/u.test(token)) {
     const numericValue = Number(token);
@@ -429,20 +478,125 @@ const parseAlarmAnalyzeIntent = (
   return null;
 };
 
+const parseAlarmIntentFallbackResult = (
+  content: unknown,
+): AlarmIntentFallbackResult | null => {
+  const normalizedContent = normalizeResponseText(content);
+
+  if (!normalizedContent) {
+    return null;
+  }
+
+  const fencedMatch = normalizedContent.match(/```(?:json)?\s*([\s\S]*?)```/iu);
+  const candidateText = fencedMatch?.[1]?.trim() ?? normalizedContent;
+  const startIndex = candidateText.indexOf("{");
+  const endIndex = candidateText.lastIndexOf("}");
+
+  if (startIndex < 0 || endIndex <= startIndex) {
+    return null;
+  }
+
+  try {
+    const parsedValue = JSON.parse(
+      candidateText.slice(startIndex, endIndex + 1),
+    ) as unknown;
+
+    if (!isRecord(parsedValue) || typeof parsedValue.type !== "string") {
+      return null;
+    }
+
+    const type = parsedValue.type.trim().toLowerCase();
+
+    if (
+      ![
+        "list",
+        "analyze_index",
+        "analyze_current",
+        "confirm",
+        "cancel",
+        "none",
+      ].includes(type)
+    ) {
+      return null;
+    }
+
+    if (type === "list") {
+      const rawStatus =
+        typeof parsedValue.status === "string" ? parsedValue.status.trim() : "";
+
+      return {
+        type,
+        status:
+          rawStatus.toLowerCase() === UNTREATED_ALARM_STATUS.toLowerCase()
+            ? UNTREATED_ALARM_STATUS
+            : "",
+      };
+    }
+
+    if (type === "analyze_index") {
+      const rawIndex = parsedValue.index;
+      const index =
+        typeof rawIndex === "number"
+          ? rawIndex
+          : typeof rawIndex === "string"
+            ? Number(rawIndex)
+            : Number.NaN;
+
+      if (!Number.isInteger(index) || index <= 0) {
+        return null;
+      }
+
+      return {
+        type,
+        index,
+      };
+    }
+
+    return {
+      type: type as AlarmIntentFallbackType,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const isPotentialTaskRuntimeMessage = (message: string): boolean => {
+  const normalizedMessage = normalizeIntentText(message);
+  const looseMessage = normalizeLooseIntentText(message);
+
+  if (/(任务|定时|提醒|cron)/u.test(normalizedMessage)) {
+    return true;
+  }
+
+  return /\b(task|tasks|schedule|scheduled|scheduler|remind|reminder|cron)\b/iu.test(
+    looseMessage,
+  );
+};
+
 const isPotentialAlarmWorkflowMessage = (message: string): boolean => {
   const normalizedMessage = normalizeIntentText(message);
+  const looseMessage = normalizeLooseIntentText(message);
 
-  if (!/告警/u.test(normalizedMessage)) {
+  if (/告警/u.test(normalizedMessage)) {
+    return true;
+  }
+
+  return /\b(alarm|alarms|alert|alerts)\b/iu.test(looseMessage);
+};
+
+const shouldTryAlarmIntentFallback = (
+  message: string,
+  workflow: AgentAlarmWorkflowState,
+): boolean => {
+  if (workflow.pendingConfirmation === "create_work_order") {
+    return true;
+  }
+
+  if (isPotentialTaskRuntimeMessage(message)) {
     return false;
   }
 
-  return (
-    /(查看|查询|列出|展示|显示|分析|诊断|排查|看下|看看|看一下)/u.test(
-      normalizedMessage,
-    ) ||
-    /(当前|未处理|信息|列表|情况)/u.test(normalizedMessage) ||
-    ALARM_INDEX_PATTERN.test(normalizedMessage)
-  );
+  return isPotentialAlarmWorkflowMessage(message);
 };
 
 const buildDailyCronExpression = (
@@ -716,7 +870,11 @@ const extractUsedTools = (messages: BaseMessage[]): string[] => {
   return [...usedTools];
 };
 
-const createChatModel = (): LanguageModelLike => {
+const hasRuntimeTaskToolUsage = (usedTools: string[]): boolean => {
+  return usedTools.some((toolName) => TASK_RUNTIME_TOOL_NAME_SET.has(toolName));
+};
+
+const createChatOpenAIModel = (): ChatOpenAI => {
   if (!config.llmApiKey) {
     throw new AgentServiceError("MISSING_API_KEY", "LLM_API_KEY is missing.");
   }
@@ -732,6 +890,10 @@ const createChatModel = (): LanguageModelLike => {
         }
       : undefined,
   });
+};
+
+const createChatModel = (): LanguageModelLike => {
+  return createChatOpenAIModel();
 };
 
 const createRuntimeAgent = (tools: AgentTools): AgentRuntime => {
@@ -1073,6 +1235,90 @@ export class AgentService {
     return this.toolRegistry
       .getAll()
       .filter((tool) => RUNTIME_AGENT_TOOL_NAME_SET.has(tool.name));
+  }
+
+  private async classifyAlarmIntentFallback(
+    input: NormalizedUserMessageInput,
+    workflow: AgentAlarmWorkflowState,
+  ): Promise<AlarmIntentFallbackResult | null> {
+    if (!shouldTryAlarmIntentFallback(input.message, workflow)) {
+      return null;
+    }
+
+    try {
+      const model = createChatOpenAIModel();
+      const response = await model.invoke([
+        new SystemMessage(ALARM_INTENT_FALLBACK_PROMPT),
+        new HumanMessage(
+          JSON.stringify({
+            message: input.message,
+            pendingConfirmation:
+              workflow.pendingConfirmation === "create_work_order",
+            alarmListCount: workflow.alarmList.length,
+            hasSelectedAlarm: Boolean(workflow.selectedAlarm),
+          }),
+        ),
+      ]);
+      const intent = parseAlarmIntentFallbackResult(response.content);
+
+      agentLogger.info("alarm workflow fallback classified", {
+        channel: input.channel,
+        userId: maskUserId(input.userId),
+        classifiedType: intent?.type ?? "invalid",
+        classifiedStatus: intent?.status,
+        classifiedIndex: intent?.index,
+      });
+
+      return intent;
+    } catch (error) {
+      agentLogger.warn("alarm workflow fallback classification failed", {
+        channel: input.channel,
+        userId: maskUserId(input.userId),
+        errorMessage: error instanceof Error ? error.message : "Unknown error",
+      });
+      return null;
+    }
+  }
+
+  private async handleAlarmIntentFallbackResult(
+    userId: string,
+    workflow: AgentAlarmWorkflowState,
+    intent: AlarmIntentFallbackResult,
+  ): Promise<ProcessUserMessageResult | null> {
+    switch (intent.type) {
+      case "list":
+        return this.handleAlarmListIntent(userId, {
+          status: intent.status ?? "",
+        });
+      case "analyze_index":
+        if (!intent.index) {
+          return null;
+        }
+
+        return this.handleAlarmAnalyzeIntent(userId, {
+          type: "index",
+          index: intent.index,
+        });
+      case "analyze_current":
+        return this.handleAlarmAnalyzeIntent(userId, {
+          type: "current",
+        });
+      case "confirm":
+        if (workflow.pendingConfirmation === "create_work_order") {
+          return this.handleConfirmationApprove(userId);
+        }
+
+        return null;
+      case "cancel":
+        if (workflow.pendingConfirmation === "create_work_order") {
+          return this.handleConfirmationCancel(userId);
+        }
+
+        return null;
+      case "none":
+      default:
+        return null;
+    }
   }
 
   private getOrCreateRuntimeAgent(): AgentRuntime {
@@ -1559,8 +1805,49 @@ export class AgentService {
 
     const workflow = this.memoryStore.getAlarmWorkflow(input.userId);
 
+    if (workflow.pendingConfirmation === "create_work_order") {
+      const confirmationResolution = resolvePendingConfirmationReply(
+        input.message,
+      );
+
+      if (confirmationResolution === "confirm") {
+        agentLogger.info("alarm workflow confirmation approved", {
+          channel: input.channel,
+          userId: maskUserId(input.userId),
+        });
+
+        return this.handleConfirmationApprove(input.userId);
+      }
+
+      if (confirmationResolution === "cancel") {
+        agentLogger.info("alarm workflow confirmation cancelled", {
+          channel: input.channel,
+          userId: maskUserId(input.userId),
+        });
+
+        return this.handleConfirmationCancel(input.userId);
+      }
+    }
+
+    const fallbackIntent = await this.classifyAlarmIntentFallback(
+      input,
+      workflow,
+    );
+
+    if (fallbackIntent) {
+      const fallbackResult = await this.handleAlarmIntentFallbackResult(
+        input.userId,
+        workflow,
+        fallbackIntent,
+      );
+
+      if (fallbackResult) {
+        return fallbackResult;
+      }
+    }
+
     if (workflow.pendingConfirmation !== "create_work_order") {
-      if (isPotentialAlarmWorkflowMessage(input.message)) {
+      if (shouldTryAlarmIntentFallback(input.message, workflow)) {
         return {
           reply: ALARM_WORKFLOW_GUIDANCE_REPLY,
           usedTools: [],
@@ -1568,28 +1855,6 @@ export class AgentService {
       }
 
       return null;
-    }
-
-    const confirmationResolution = resolvePendingConfirmationReply(
-      input.message,
-    );
-
-    if (confirmationResolution === "confirm") {
-      agentLogger.info("alarm workflow confirmation approved", {
-        channel: input.channel,
-        userId: maskUserId(input.userId),
-      });
-
-      return this.handleConfirmationApprove(input.userId);
-    }
-
-    if (confirmationResolution === "cancel") {
-      agentLogger.info("alarm workflow confirmation cancelled", {
-        channel: input.channel,
-        userId: maskUserId(input.userId),
-      });
-
-      return this.handleConfirmationCancel(input.userId);
     }
 
     return {
@@ -1618,10 +1883,17 @@ export class AgentService {
     const resultMessages = Array.isArray(result.messages)
       ? result.messages
       : [];
+    const usedTools = extractUsedTools(resultMessages);
+
+    if (hasRuntimeTaskToolUsage(usedTools)) {
+      this.memoryStore.updateTaskWorkflow(normalizedInput.userId, () => ({
+        pendingCreateDraft: undefined,
+      }));
+    }
 
     return {
       reply: extractReplyFromMessages(resultMessages),
-      usedTools: extractUsedTools(resultMessages),
+      usedTools,
     };
   }
 
