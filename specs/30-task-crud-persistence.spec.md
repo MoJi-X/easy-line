@@ -51,7 +51,6 @@
 - inputs：需求文档 3.3.1、3.3.4、8.2；API 文档 5。
 - outputs：`src/tools/task-tools.ts`、任务工具输入输出契约、Slash Command 解析规则。
 - dependencies：TASK-001、TASK-002、`specs/20-agent-orchestrator.spec.md` 的 AGT-003。
-- implementation notes：首轮工具固定为 `task.create`、`task.list`、`task.update`、`task.delete`；本切片验收优先关注 `task.create` 与 `task.list`；Slash Command 采用确定性参数格式，并支持 `cron="0 0 8 * * *"` 这类带引号值；自然语言缺少告警范围或时间时，Agent 必须先追问补全，再把简单每日时间表达转换为 6 字段 cron；同一个仓储结果必须同时支撑 `/task` 和自然语言回复，避免两套查询口径。
 - implementation notes：首轮工具固定为 `task.create`、`task.list`、`task.update`、`task.delete`；本切片验收优先关注 `task.create` 与 `task.list`；Slash Command 采用确定性参数格式，并支持 `cron="0 0 8 * * *"` 这类带引号值；自然语言缺少告警范围或时间时，Agent 必须先追问补全，再把简单每日时间表达转换为 6 字段 cron；同一个仓储结果必须同时支撑 `/task` 和自然语言回复，避免两套查询口径；显式任务编排仍优先，但对于未命中显式规则的多语言或自由表达任务请求，允许 runtime agent 调用 `task.*` Tool 兜底。
 - acceptance criteria：`/task create` 与 `/task list` 能稳定创建和查询“获取告警信息”定时任务；自然语言创建任务请求和查询任务请求都能映射到对应工具或同一仓储服务；若本轮未完成 update/delete，自然语言与命令链路的 create/list 仍须完整可验。
 
