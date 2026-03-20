@@ -70,7 +70,7 @@ const TASK_CREATE_REPLY_MISSING_SCOPE =
 const TASK_CREATE_REPLY_MISSING_TIME =
   "还缺少执行时间，请补充例如“08:00”或“每天早上 8 点”。系统会自动转换为 6 字段 cron。";
 const ALARM_WORKFLOW_GUIDANCE_REPLY =
-  '告警链路支持“查看告警信息”“查看当前未处理告警信息”或“分析第 1 条告警信息”这样的指令。';
+  "告警链路支持“查看告警信息”“查看当前未处理告警信息”或“分析第 1 条告警信息”这样的指令。";
 const CREATE_ALARM_SESSION_TOOL_NAME = "create_alarm_session";
 const LIST_ALARMS_TOOL_NAME = "list_alarms";
 const ANALYZE_ALARM_TOOL_NAME = "analyze_alarm";
@@ -106,11 +106,11 @@ const AGENT_SYSTEM_PROMPT = [
 
 const ALARM_INTENT_FALLBACK_PROMPT = [
   "你是告警工作流意图分类器，只负责把用户消息归一化为 JSON。",
-  "不要回答问题，不要输出解释，不要输出 Markdown，不要输出工具名，不要输出 <longcat_tool_call>。",
+  "不要回答问题，不要输出解释，不要输出 Markdown，不要输出工具名，不要输出 <xxx_tool_call>。",
   "你只能输出一个 JSON 对象，字段仅允许 type、index、status。",
   'type 只能是 "list"、"analyze_index"、"analyze_current"、"confirm"、"cancel"、"none"。',
   'status 仅在 type="list" 时使用，值只能是 "" 或 "Untreated"。',
-  "index 仅在 type=\"analyze_index\" 时使用，必须是正整数。",
+  'index 仅在 type="analyze_index" 时使用，必须是正整数。',
   "当用户表达查看当前告警、查看未处理告警、列出告警、show alarms、show untreated alarms 等意思时，返回 list。",
   "当用户表达分析第 N 条、analyze the first alarm、analyze alarm 2 等意思时，返回 analyze_index 或 analyze_current。",
   "当用户表达 yes, confirm, create it, build the work order 时，只有在 pendingConfirmation=true 的上下文里才返回 confirm。",
@@ -433,9 +433,7 @@ const parseChineseOrdinal = (token: string): number | null => {
 const parseAlarmListIntent = (message: string): AlarmListIntent | null => {
   const normalizedMessage = normalizeIntentText(message);
 
-  if (
-    !ALARM_LIST_PATTERNS.some((pattern) => pattern.test(normalizedMessage))
-  ) {
+  if (!ALARM_LIST_PATTERNS.some((pattern) => pattern.test(normalizedMessage))) {
     return null;
   }
 
@@ -1240,6 +1238,7 @@ export class AgentService {
   ): AgentAlarmWorkflowState {
     return this.memoryStore.updateAlarmWorkflow(userId, updater);
   }
+
   private getRuntimeAgentTools(): AgentTools {
     return this.toolRegistry
       .getAll()
