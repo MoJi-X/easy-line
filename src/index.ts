@@ -56,15 +56,20 @@ process.once('SIGTERM', () => {
 const bootstrap = (): void => {
   try {
     const { config } = require('./config') as typeof import('./config');
+    const { AlarmAgentClient } = require('./clients/alarm-agent-client') as typeof import('./clients/alarm-agent-client');
     const { taskRepository } = require('./services/task-repository') as typeof import('./services/task-repository');
     const { schedulerService } = require('./services/scheduler') as typeof import('./services/scheduler');
-    const { agentService } = require('./services/agent') as typeof import('./services/agent');
     const { lineService } = require('./services/line') as typeof import('./services/line');
     const webhookRouter = (require('./routes/webhook') as typeof import('./routes/webhook')).default;
     const chatRouter = (require('./routes/chat') as typeof import('./routes/chat')).default;
     const taskRouter = (require('./routes/tasks') as typeof import('./routes/tasks')).default;
 
-    schedulerService.setDeps({ agentService, lineService });
+    const alarmClient = new AlarmAgentClient({
+      baseUrl: config.alarmAgentBaseUrl,
+      timeoutMs: config.alarmAgentTimeoutMs,
+    });
+
+    schedulerService.setDeps({ alarmClient, lineService });
     stopScheduler = () => schedulerService.stop();
 
     taskRepository.subscribe((event) => {
@@ -110,4 +115,3 @@ const bootstrap = (): void => {
 };
 
 bootstrap();
-

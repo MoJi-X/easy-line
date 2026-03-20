@@ -446,13 +446,16 @@ const extractSessionId = (payload: unknown): string | undefined => {
 const extractAlarmArray = (payload: unknown): Record<string, unknown>[] => {
   const candidates = [
     payload,
+    getNestedValue(payload, ["alarms"]),
     getNestedValue(payload, ["data"]),
+    getNestedValue(payload, ["data", "alarms"]),
     getNestedValue(payload, ["data", "data"]),
     getNestedValue(payload, ["data", "items"]),
     getNestedValue(payload, ["data", "list"]),
     getNestedValue(payload, ["items"]),
     getNestedValue(payload, ["list"]),
     getNestedValue(payload, ["result"]),
+    getNestedValue(payload, ["result", "alarms"]),
     getNestedValue(payload, ["result", "data"]),
     getNestedValue(payload, ["result", "items"]),
     getNestedValue(payload, ["result", "list"]),
@@ -526,7 +529,11 @@ const buildAlarmSummaryMarkdown = (alarms: NormalizedAlarmRecord[]): string => {
   return `### 告警列表\n\n${alarmLines.join("\n")}`;
 };
 
-const normalizeListAlarmsResponse = (
+/**
+ * Normalize the alarm list payload into the canonical response shape used by
+ * the alarm list tool and other callers that need the same summary format.
+ */
+export const normalizeListAlarmsResponse = (
   payload: unknown,
   input: AlarmListAlarmsInput,
 ): ListAlarmsSuccess => {

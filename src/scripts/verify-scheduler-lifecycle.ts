@@ -4,7 +4,12 @@ process.env.LINE_CHANNEL_ACCESS_TOKEN ??= 'verify-line-token';
 import assert from 'node:assert/strict';
 
 import type { AlarmFetchTask, TaskRepositoryChangeEvent } from '../services/task-repository';
-import { SchedulerService, type SchedulerRefreshSnapshot } from '../services/scheduler';
+import {
+  SchedulerService,
+  type SchedulerAlarmClient,
+  type SchedulerLineService,
+  type SchedulerRefreshSnapshot,
+} from '../services/scheduler';
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                            */
@@ -29,6 +34,28 @@ const buildEvent = (
   tasks: AlarmFetchTask[],
   task?: AlarmFetchTask,
 ): TaskRepositoryChangeEvent => ({ action, tasks, task });
+
+const sleep = (durationMs: number): Promise<void> => {
+  return new Promise((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
+};
+
+const extractMessageText = (messages: unknown): string => {
+  const messageList = Array.isArray(messages) ? messages : [messages];
+
+  return messageList
+    .map((message) => {
+      if (!message || typeof message !== 'object') {
+        return '';
+      }
+
+      const record = message as Record<string, unknown>;
+
+      return typeof record.text === 'string' ? record.text : '';
+    })
+    .join('\n');
+};
 
 /* ------------------------------------------------------------------ */
 /* SCH-001  调度器加载与刷新生命周期                                     */
@@ -169,20 +196,112 @@ const verifySCH003 = (): void => {
 };
 
 /* ------------------------------------------------------------------ */
+/* SCH-004  直连告警拉取与推送                                            */
+/* ------------------------------------------------------------------ */
+
+const verifySCH004 = async (): Promise<void> => {
+  console.info('\n-- SCH-004: Direct alarm fetch and push --');
+
+  let lastListRequest:
+    | {
+        page?: number;
+        page_size?: number;
+        status?: string;
+      }
+    | undefined;
+  const pushedMessages: Array<{ text: string; to: string }> = [];
+
+  const alarmClient: SchedulerAlarmClient = {
+    async listAlarms(request) {
+      lastListRequest = request;
+
+      return {
+        total: 2,
+        page: 1,
+        page_size: 20,
+        data: [
+          {
+            id: 101,
+            deviceSn: 'INV-0001',
+            siteName: 'Bangkok PV Site',
+            alarm_code: '130',
+            processingStatus: 'Untreated',
+            createdAt: '2026-03-16 09:20:00',
+          },
+          {
+            id: 102,
+            deviceSn: 'INV-0002',
+            siteName: 'Bangkok PV Site',
+            alarm_code: '131',
+            processingStatus: 'Untreated',
+            createdAt: '2026-03-16 09:25:00',
+          },
+        ],
+      };
+    },
+  };
+
+  const lineService: SchedulerLineService = {
+    async pushMessage(to, messages) {
+      pushedMessages.push({
+        text: extractMessageText(messages),
+        to,
+      });
+    },
+  };
+
+  const scheduler = new SchedulerService();
+  scheduler.setDeps({ alarmClient, lineService });
+
+  const task = buildTask({
+    alertScope: 'Current Untreated Alarms',
+    cron: '*/1 * * * * *',
+    id: 'task-direct-fetch',
+    name: '当前未处理告警定时获取',
+  });
+
+  scheduler.notifyTasksUpdated(buildEvent('reload', [task]));
+  await sleep(1700);
+  scheduler.stop();
+
+  assert.deepEqual(lastListRequest, {
+    status: 'Untreated',
+    page: 1,
+    page_size: 20,
+  });
+
+  assert.ok(pushedMessages.length > 0);
+
+  const firstPush = pushedMessages[0]?.text ?? '';
+  assert.match(firstPush, /已完成告警定时任务/u);
+  assert.match(firstPush, /当前未处理告警/u);
+  assert.match(firstPush, /INV-0001/u);
+  assert.match(firstPush, /Bangkok PV Site/u);
+  assert.doesNotMatch(firstPush, /状态机接管/u);
+  assert.doesNotMatch(firstPush, /Current Alarms/u);
+
+  const executions = scheduler.getRecentExecutions();
+  assert.ok(executions.length > 0);
+  assert.equal(executions[0]?.status, 'success');
+  assert.match(executions[0]?.message ?? '', /INV-0001/u);
+
+  console.info('  SCH-004 passed.');
+};
+
+/* ------------------------------------------------------------------ */
 /* Run all                                                            */
 /* ------------------------------------------------------------------ */
 
-const verify = (): void => {
+const verify = async (): Promise<void> => {
   verifySCH001();
   verifySCH002();
   verifySCH003();
+  await verifySCH004();
 
   console.info('\nScheduler lifecycle verification passed.\n');
 };
 
-try {
-  verify();
-} catch (error) {
+void verify().catch((error: unknown) => {
   console.error('Scheduler lifecycle verification failed.', error);
   process.exitCode = 1;
-}
+});
