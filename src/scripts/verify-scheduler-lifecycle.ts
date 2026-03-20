@@ -3,6 +3,7 @@ process.env.LINE_CHANNEL_ACCESS_TOKEN ??= 'verify-line-token';
 
 import assert from 'node:assert/strict';
 
+const { AgentService } = require('../services/agent') as typeof import('../services/agent');
 import type { AlarmFetchTask, TaskRepositoryChangeEvent } from '../services/task-repository';
 import {
   SchedulerService,
@@ -250,8 +251,9 @@ const verifySCH004 = async (): Promise<void> => {
     },
   };
 
+  const agentService = new AgentService();
   const scheduler = new SchedulerService();
-  scheduler.setDeps({ alarmClient, lineService });
+  scheduler.setDeps({ agentService, alarmClient, lineService });
 
   const task = buildTask({
     alertScope: 'Current Untreated Alarms',
@@ -277,6 +279,7 @@ const verifySCH004 = async (): Promise<void> => {
   assert.match(firstPush, /当前未处理告警/u);
   assert.match(firstPush, /INV-0001/u);
   assert.match(firstPush, /Bangkok PV Site/u);
+  assert.match(firstPush, /直接回复“分析第 1 条告警”/u);
   assert.doesNotMatch(firstPush, /状态机接管/u);
   assert.doesNotMatch(firstPush, /Current Alarms/u);
 
@@ -284,6 +287,12 @@ const verifySCH004 = async (): Promise<void> => {
   assert.ok(executions.length > 0);
   assert.equal(executions[0]?.status, 'success');
   assert.match(executions[0]?.message ?? '', /INV-0001/u);
+
+  const seededSession = agentService.getSessionContext('U-scheduler-test');
+  assert.equal(seededSession.alarmWorkflow.alarmList.length, 2);
+  assert.equal(seededSession.alarmWorkflow.selectedAlarm, undefined);
+  assert.equal(seededSession.alarmWorkflow.pendingConfirmation, undefined);
+  assert.equal(seededSession.alarmWorkflow.lastAnalysisMarkdown, undefined);
 
   console.info('  SCH-004 passed.');
 };

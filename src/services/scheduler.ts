@@ -12,6 +12,7 @@ import {
 import { createAppLogger } from "../utils/app-logger";
 import { getLocalIsoString } from "../utils/date";
 import { maskUserId } from "../utils/logger";
+import type { AgentService } from "./agent";
 import type {
   AlarmFetchTask,
   TaskRepositoryChangeEvent,
@@ -87,6 +88,8 @@ export interface SchedulerLineService {
  * Runtime dependencies injected into the scheduler.
  */
 export interface SchedulerServiceDeps {
+  /** Agent service used to persist the latest alarm batch for later analysis. */
+  agentService?: AgentService;
   /** Direct alarm client used to fetch the current list. */
   alarmClient?: SchedulerAlarmClient;
   /** LINE collaborator used to push the rendered summary. */
@@ -179,7 +182,7 @@ const buildScheduledAlarmPushMessage = (
 
   const footer =
     result.alarms.length > 0
-      ? ["如需继续分析，请回复“查看告警信息”后选择告警编号。"]
+      ? ["如需继续分析，请直接回复“分析第 1 条告警”或对应编号。"]
       : [];
 
   return [...summaryHeader, result.alarm_summary_markdown, ...footer].join(
@@ -208,6 +211,8 @@ export class SchedulerService {
 
   private recentExecutions: SchedulerExecutionRecord[] = [];
 
+  private agentService?: AgentService;
+
   private alarmClient?: SchedulerAlarmClient;
 
   private lineService?: SchedulerLineService;
@@ -216,6 +221,7 @@ export class SchedulerService {
    * Inject runtime dependencies for direct alarm fetching and LINE push.
    */
   setDeps(deps: SchedulerServiceDeps): void {
+    this.agentService = deps.agentService;
     this.alarmClient = deps.alarmClient;
     this.lineService = deps.lineService;
   }
@@ -390,13 +396,13 @@ export class SchedulerService {
    * summary, and push it to LINE.
    */
   private async fetchAndPush(task: AlarmFetchTask): Promise<string> {
-    if (!this.alarmClient || !this.lineService) {
+    if (!this.alarmClient) {
       const fallback = buildFallbackExecutionMessage(
         task,
-        "告警服务或 LINE 服务未注入，跳过推送",
+        "告警服务未注入，跳过推送",
       );
 
-      schedulerLogger.warn("scheduler deps not set, skipping direct fetch", {
+      schedulerLogger.warn("scheduler alarm client not set, skipping fetch", {
         taskId: task.id,
         userId: maskUserId(task.ownerUserId),
       });
@@ -445,7 +451,41 @@ export class SchedulerService {
       returnedCount: listResult.alarms.length,
     });
 
+    if (this.agentService) {
+      this.agentService.updateAlarmWorkflow(task.ownerUserId, (workflow) => ({
+        ...workflow,
+        alarmList: listResult.alarms.map((alarm) => ({
+          ...alarm,
+          raw: { ...alarm.raw },
+        })),
+        selectedAlarm: undefined,
+        lastAnalysisMarkdown: undefined,
+        lastWorkOrderResult: undefined,
+        pendingConfirmation: undefined,
+      }));
+
+      schedulerLogger.info("alarm workflow primed for later analysis", {
+        taskId: task.id,
+        taskName: task.name,
+        userId: maskUserId(task.ownerUserId),
+        alarmCount: listResult.alarms.length,
+      });
+    } else {
+      schedulerLogger.warn("alarm workflow store not set, skipping session seed", {
+        taskId: task.id,
+        userId: maskUserId(task.ownerUserId),
+      });
+    }
+
     const reply = buildScheduledAlarmPushMessage(task, listResult);
+
+    if (!this.lineService) {
+      schedulerLogger.warn("alarm task LINE service not set, skipping push", {
+        taskId: task.id,
+        userId: maskUserId(task.ownerUserId),
+      });
+      return reply;
+    }
 
     try {
       await this.lineService.pushMessage(

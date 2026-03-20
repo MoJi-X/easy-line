@@ -57,6 +57,7 @@ const bootstrap = (): void => {
   try {
     const { config } = require('./config') as typeof import('./config');
     const { AlarmAgentClient } = require('./clients/alarm-agent-client') as typeof import('./clients/alarm-agent-client');
+    const { agentService } = require('./services/agent') as typeof import('./services/agent');
     const { taskRepository } = require('./services/task-repository') as typeof import('./services/task-repository');
     const { schedulerService } = require('./services/scheduler') as typeof import('./services/scheduler');
     const { lineService } = require('./services/line') as typeof import('./services/line');
@@ -69,7 +70,7 @@ const bootstrap = (): void => {
       timeoutMs: config.alarmAgentTimeoutMs,
     });
 
-    schedulerService.setDeps({ alarmClient, lineService });
+    schedulerService.setDeps({ agentService, alarmClient, lineService });
     stopScheduler = () => schedulerService.stop();
 
     taskRepository.subscribe((event) => {

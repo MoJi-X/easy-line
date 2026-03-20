@@ -35,7 +35,7 @@
 - inputs：需求文档 3.4.2、3.4.3、5.1；架构文档 5.4；API 文档 7.3。
 - outputs：调度触发回调、执行日志、最近执行记录缓存。
 - dependencies：SCH-001。
-- implementation notes：执行体围绕“获取告警信息”任务语义命名，不再保留天气逻辑；Scheduler 直接调用告警服务的列表接口，根据任务 `alertScope` 映射查询状态，先生成文本摘要再通过 `LineService.pushMessage()` 主动推送，不再经过通用 Agent；执行记录至少保存 `taskId`、`taskName`、`ownerUserId`、`cron`、`status`、`triggeredBy`、`executedAt`、`durationMs`、`message`；单任务失败不得影响其他任务继续运行。
+- implementation notes：执行体围绕“获取告警信息”任务语义命名，不再保留天气逻辑；Scheduler 直接调用告警服务的列表接口，根据任务 `alertScope` 映射查询状态，先生成文本摘要再通过 `LineService.pushMessage()` 主动推送，并把同一批 `alarmList` 写回用户会话状态，供后续直接“分析第 N 条告警”继续处理，不再经过通用 Agent；执行记录至少保存 `taskId`、`taskName`、`ownerUserId`、`cron`、`status`、`triggeredBy`、`executedAt`、`durationMs`、`message`；单任务失败不得影响其他任务继续运行。
 - acceptance criteria：启用任务可按 `cron` 注册并被触发；执行开始、完成、失败都有可读日志；最近执行记录可供后续接口读取。
 
 ### SCH-003 调度状态与健康摘要

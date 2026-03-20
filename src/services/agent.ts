@@ -1231,6 +1231,15 @@ export class AgentService {
     return this.toolRegistry.getNames();
   }
 
+  /**
+   * Replace the stored alarm workflow snapshot for the given user.
+   */
+  updateAlarmWorkflow(
+    userId: string,
+    updater: (workflow: AgentAlarmWorkflowState) => AgentAlarmWorkflowState,
+  ): AgentAlarmWorkflowState {
+    return this.memoryStore.updateAlarmWorkflow(userId, updater);
+  }
   private getRuntimeAgentTools(): AgentTools {
     return this.toolRegistry
       .getAll()
